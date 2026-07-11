@@ -1,4 +1,4 @@
-const CACHE = "eduplanner-v4";
+const CACHE = "eduplanner-v6";
 const ASSETS = [
   "./",
   "./index.html",
@@ -12,8 +12,10 @@ const ASSETS = [
 ];
 
 self.addEventListener("install", (event) => {
+  // Pre-cache the shell. Do NOT skipWaiting here — the page decides when to
+  // activate the new SW (via the "Update available" prompt) so it never swaps
+  // out mid-session unexpectedly.
   event.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)));
-  self.skipWaiting();
 });
 
 self.addEventListener("activate", (event) => {
@@ -25,10 +27,49 @@ self.addEventListener("activate", (event) => {
   self.clients.claim();
 });
 
-// Cache-first: works fully offline once installed.
+// Let the page trigger activation of a waiting SW.
+self.addEventListener("message", (event) => {
+  if (event.data === "SKIP_WAITING") self.skipWaiting();
+});
+
 self.addEventListener("fetch", (event) => {
-  if (event.request.method !== "GET") return;
+  const req = event.request;
+  if (req.method !== "GET") return;
+
+  const url = new URL(req.url);
+  // Cross-origin (e.g. postcodes.io) — pass straight through, no caching.
+  if (url.origin !== self.location.origin) return;
+
+  // Navigations / HTML → network-first: fresh when online, cache when offline.
+  const isNavigation =
+    req.mode === "navigate" ||
+    (req.headers.get("accept") || "").includes("text/html");
+  if (isNavigation) {
+    event.respondWith(
+      fetch(req)
+        .then((res) => {
+          const copy = res.clone();
+          caches.open(CACHE).then((c) => c.put(req, copy));
+          return res;
+        })
+        .catch(() =>
+          caches.match(req).then((c) => c || caches.match("./index.html"))
+        )
+    );
+    return;
+  }
+
+  // Same-origin static assets → stale-while-revalidate: serve cache instantly,
+  // refresh the cached copy in the background so the next load is current.
   event.respondWith(
-    caches.match(event.request).then((cached) => cached || fetch(event.request))
+    caches.match(req).then((cached) => {
+      const network = fetch(req)
+        .then((res) => {
+          caches.open(CACHE).then((c) => c.put(req, res.clone()));
+          return res;
+        })
+        .catch(() => cached);
+      return cached || network;
+    })
   );
 });

@@ -59,6 +59,7 @@
             <div class="field"><label for="f-ranking">National ranking</label><input id="f-ranking" placeholder="e.g. 12" /></div>
             <div class="field"><label for="f-pan">PAN</label><input id="f-pan" placeholder="e.g. 180" /></div>
           </div>
+          <p class="hint">Ranking source: <a href="https://www.thetimes.com/best-schools-league-table" target="_blank" rel="noopener noreferrer">The Times Best Schools League Table</a>.</p>
           <div class="field"><label for="f-registration">Registration</label><textarea id="f-registration" rows="2" placeholder="How / when to register"></textarea></div>
           <div class="grid-2">
             <div class="field"><label for="f-exam">Exam date</label><input id="f-exam" type="date" /></div>
@@ -149,12 +150,18 @@
     </section>
   </main>
 
+  <div id="update-banner" class="update-banner hidden">
+    <span>A new version is available.</span>
+    <button type="button" id="update-reload" class="btn-primary">Reload</button>
+  </div>
+
   <footer class="app-footer">
     <div class="backup-actions">
       <button id="export-backup" class="btn-secondary">Export backup</button>
       <label class="btn-secondary file-label">Import backup<input id="import-backup" type="file" accept="application/json" hidden /></label>
     </div>
     <span id="install-hint"></span>
+    <p class="footer-source">Rankings sourced from <a href="https://www.thetimes.com/best-schools-league-table" target="_blank" rel="noopener noreferrer">The Times Best Schools League Table</a>.</p>
   </footer>
 
   <script src="storage.js"></script>
@@ -173,8 +180,37 @@
         });
         return;
       }
+
+      var banner = document.getElementById('update-banner');
+      var reloadBtn = document.getElementById('update-reload');
+      var refreshing = false;
+
+      // When the new SW takes control, reload once to pick up fresh assets.
+      navigator.serviceWorker.addEventListener('controllerchange', function () {
+        if (refreshing) return;
+        refreshing = true;
+        window.location.reload();
+      });
+
+      function showUpdate(worker) {
+        if (!banner || !worker) return;
+        banner.classList.remove('hidden');
+        reloadBtn.onclick = function () { worker.postMessage('SKIP_WAITING'); };
+      }
+
       window.addEventListener('load', function () {
-        navigator.serviceWorker.register('service-worker.js');
+        navigator.serviceWorker.register('service-worker.js').then(function (reg) {
+          // A worker already waiting (updated on a previous visit).
+          if (reg.waiting && navigator.serviceWorker.controller) showUpdate(reg.waiting);
+          // A new worker found — prompt once it finishes installing.
+          reg.addEventListener('updatefound', function () {
+            var nw = reg.installing;
+            if (!nw) return;
+            nw.addEventListener('statechange', function () {
+              if (nw.state === 'installed' && navigator.serviceWorker.controller) showUpdate(nw);
+            });
+          });
+        });
       });
     })();
   </script>
