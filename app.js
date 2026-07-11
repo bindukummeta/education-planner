@@ -78,14 +78,15 @@
   }
 
   // ============ SCHOOLS ============
-  // Straight-line miles from the home postcode to a school's postcode, or the
-  // manually-typed distance if either postcode / the network is unavailable.
+  // Straight-line miles from the home postcode to a school's postcode.
+  // Computed live (no manual value) — blank until a home postcode is set and
+  // both postcodes geocode successfully.
   async function distanceLabel(school, homeCoord) {
     if (homeCoord && school.postcode) {
       const c = await geocode(school.postcode);
       if (c) return haversineMiles(homeCoord, c).toFixed(1) + " mi";
     }
-    return school.distance || "";
+    return "";
   }
 
   async function renderSchools() {
@@ -107,7 +108,6 @@
         "<h3>" + esc(s.name) + "</h3>" +
         '<div class="school-meta">' +
         (dist ? "<span><b>Distance:</b> " + esc(dist) + "</span>" : "") +
-        (s.travelTime ? "<span><b>Travel:</b> " + esc(s.travelTime) + "</span>" : "") +
         (s.nationalRanking ? "<span><b>Rank:</b> " + esc(s.nationalRanking) + "</span>" : "") +
         (s.examDate ? "<span><b>Exam:</b> " + esc(s.examDate) + "</span>" : "") +
         (cut != null ? "<span><b>Cut-off:</b> " + cut + "%</span>" : "") +
@@ -149,8 +149,6 @@
     $("school-id").value = school ? school.id : "";
     $("f-name").value = school ? school.name || "" : "";
     $("f-postcode").value = school ? school.postcode || "" : "";
-    $("f-distance").value = school ? school.distance || "" : "";
-    $("f-travel").value = school ? school.travelTime || "" : "";
     $("f-ranking").value = school ? school.nationalRanking || "" : "";
     $("f-pan").value = school ? school.pan || "" : "";
     $("f-registration").value = school ? school.registration || "" : "";
@@ -191,8 +189,6 @@
       id: $("school-id").value || undefined,
       name: $("f-name").value.trim(),
       postcode: $("f-postcode").value.trim(),
-      distance: $("f-distance").value.trim(),
-      travelTime: $("f-travel").value.trim(),
       nationalRanking: $("f-ranking").value.trim(),
       pan: $("f-pan").value.trim(),
       registration: $("f-registration").value.trim(),
