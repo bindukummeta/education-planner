@@ -183,6 +183,7 @@
 
       var banner = document.getElementById('update-banner');
       var reloadBtn = document.getElementById('update-reload');
+      var registration = null;
       var refreshing = false;
 
       // When the new SW takes control, reload once to pick up fresh assets.
@@ -192,22 +193,41 @@
         window.location.reload();
       });
 
-      function showUpdate(worker) {
-        if (!banner || !worker) return;
-        banner.classList.remove('hidden');
-        reloadBtn.onclick = function () { worker.postMessage('SKIP_WAITING'); };
+      function activateUpdate() {
+        // Read the waiting worker fresh at click time (the one captured when the
+        // banner appeared may already have moved on).
+        var waiting = (registration && registration.waiting) || null;
+        if (waiting) {
+          waiting.postMessage('SKIP_WAITING');
+        }
+        // Fallback: if controllerchange doesn't fire (e.g. no waiting worker,
+        // or the message is missed), reload anyway so the button always works.
+        setTimeout(function () {
+          if (!refreshing) {
+            refreshing = true;
+            window.location.reload();
+          }
+        }, 1500);
       }
+
+      function showUpdate() {
+        if (!banner) return;
+        banner.classList.remove('hidden');
+      }
+
+      if (reloadBtn) reloadBtn.addEventListener('click', activateUpdate);
 
       window.addEventListener('load', function () {
         navigator.serviceWorker.register('service-worker.js').then(function (reg) {
+          registration = reg;
           // A worker already waiting (updated on a previous visit).
-          if (reg.waiting && navigator.serviceWorker.controller) showUpdate(reg.waiting);
+          if (reg.waiting && navigator.serviceWorker.controller) showUpdate();
           // A new worker found — prompt once it finishes installing.
           reg.addEventListener('updatefound', function () {
             var nw = reg.installing;
             if (!nw) return;
             nw.addEventListener('statechange', function () {
-              if (nw.state === 'installed' && navigator.serviceWorker.controller) showUpdate(nw);
+              if (nw.state === 'installed' && navigator.serviceWorker.controller) showUpdate();
             });
           });
         });
