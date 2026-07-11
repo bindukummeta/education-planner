@@ -27,7 +27,7 @@
   // registration, etc.). On load, migrate() refreshes those fields on existing
   // preset records whose stored version is older — so improvements reach users
   // without a destructive reset and without touching their own edits.
-  const SEED_VERSION = 3;
+  const SEED_VERSION = 4;
 
   // Fields owned by the seed (authoritative, refreshed on a version bump).
   const SEED_OWNED = [
@@ -58,7 +58,7 @@
       name: "Nonsuch High School for Girls",
       postcode: "SM3 8AB",
       nationalRanking: "National 13 (The Sunday Times / The Times Parent Power Best Schools 2026; also State Secondary School of the Year in the Southeast 2026). ⚠ Re-check yearly.",
-      pan: "",
+      pan: "210",
       examBoard: "Bespoke / consortium",
       registration: "2027 entry (Sutton SET consortium): registration opens Fri 1 May 2026, closes Fri 31 Jul 2026 (access-arrangements deadline Fri 12 Jun 2026). SET Tue 15 Sep 2026; Stage 2 (NWSSEE, with Wallington) Sat 26 Sep 2026. Also name Nonsuch on the LA Common Application Form by 31 Oct. ⚠ Re-check dates each year.",
       examDate: "",
