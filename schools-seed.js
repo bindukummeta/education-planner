@@ -22,12 +22,12 @@
       distance: "",
       travelTime: "",
       nationalRanking: "",
-      pan: "",
+      pan: "180",
       registration: "",
       examDate: "",
       resultsDate: "",
-      subjectsSummary: "",
-      testsSubjects: { vr: false, nvr: false, maths: true, english: true, creativeWriting: false },
+      subjectsSummary: "Two-stage test in English & Maths. Stage 1: multiple-choice English + Maths (computer-marked, under 60 min each). Stage 2: written English (reading comprehension + creative writing) + Maths.",
+      testsSubjects: { vr: false, nvr: false, maths: true, english: true, creativeWriting: true },
       catchment: "",
       admissionNumbers: "",
       historicCutoffs: [],
@@ -45,8 +45,8 @@
       registration: "",
       examDate: "",
       resultsDate: "",
-      subjectsSummary: "",
-      testsSubjects: { vr: false, nvr: false, maths: false, english: false, creativeWriting: false },
+      subjectsSummary: "Two-stage test in English & Maths (no VR/NVR). Stage 1 (Sutton SET): multiple-choice English + Maths. Stage 2 (NWSSEE, joint with Wallington): written English (incl. a writing task) + Maths, not multiple-choice.",
+      testsSubjects: { vr: false, nvr: false, maths: true, english: true, creativeWriting: true },
       catchment: "",
       admissionNumbers: "",
       historicCutoffs: [],
@@ -60,12 +60,12 @@
       distance: "",
       travelTime: "",
       nationalRanking: "",
-      pan: "",
+      pan: "120",
       registration: "",
       examDate: "",
       resultsDate: "",
-      subjectsSummary: "",
-      testsSubjects: { vr: false, nvr: false, maths: false, english: false, creativeWriting: false },
+      subjectsSummary: "Two-round test. Round 1 (GL Assessment): multiple-choice Verbal Reasoning, Non-Verbal Reasoning & English (computer-marked); top ~300 invited to Round 2. Round 2: written English (comprehension + creative writing) + Maths.",
+      testsSubjects: { vr: true, nvr: true, maths: true, english: true, creativeWriting: true },
       catchment: "",
       admissionNumbers: "",
       historicCutoffs: [],
@@ -86,5 +86,17 @@
     return true;
   }
 
-  window.SchoolsSeed = { SEED_SCHOOLS, seedIfEmpty };
+  // Deletes ALL schools and re-inserts the seed. Destructive — call only after
+  // an explicit user confirmation. Entries/photos are untouched.
+  async function reseed() {
+    if (!window.EduStore) return false;
+    const existing = await window.EduStore.getSchools();
+    for (const s of existing) await window.EduStore.deleteSchool(s.id);
+    for (const s of SEED_SCHOOLS) {
+      await window.EduStore.saveSchool(Object.assign({}, s));
+    }
+    return true;
+  }
+
+  window.SchoolsSeed = { SEED_SCHOOLS, seedIfEmpty, reseed };
 })();

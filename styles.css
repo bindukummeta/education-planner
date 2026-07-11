@@ -81,6 +81,9 @@ h2 { font-size: 18px; margin: 0 0 14px; }
 .postcode-row { display: flex; gap: 10px; }
 .postcode-row input { flex: 1; }
 .postcode-row .btn-secondary { flex: 0 0 auto; }
+.reseed-row { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
+.reseed-row .btn-secondary { width: 100%; }
+.reseed-row .hint { margin: 8px 0 0; }
 
 /* ---- Buttons ---- */
 .btn-primary, .btn-secondary, .btn-danger {

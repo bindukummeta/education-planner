@@ -484,6 +484,21 @@
     renderSchools();
   }
 
+  // ---- reset schools to the built-in presets ----
+  async function resetToSeed() {
+    if (!window.SchoolsSeed) return;
+    if (!confirm("Replace the current school list with the preset schools? Your daily log and photos are kept.")) return;
+    const hint = $("reseed-hint");
+    hint.textContent = "Resetting…";
+    try {
+      await window.SchoolsSeed.reseed();
+      hint.textContent = "Done — school list reset to presets.";
+    } catch (_) {
+      hint.textContent = "Couldn't reset the school list.";
+    }
+    renderSchools();
+  }
+
   // ============ INIT ============
   async function init() {
     await EduStore.ready();
@@ -495,6 +510,7 @@
     document.querySelectorAll(".tab").forEach((t) =>
       t.addEventListener("click", () => showView(t.dataset.view)));
     $("save-home-postcode").addEventListener("click", saveHomePostcode);
+    $("reset-seed").addEventListener("click", resetToSeed);
     $("add-school").addEventListener("click", () => openSchoolForm(null));
     $("cancel-school").addEventListener("click", closeSchoolForm);
     $("delete-school").addEventListener("click", removeSchool);
