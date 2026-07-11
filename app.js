@@ -498,7 +498,13 @@
   // ============ INIT ============
   async function init() {
     await EduStore.ready();
-    if (window.SchoolsSeed) { try { await window.SchoolsSeed.seedIfEmpty(); } catch (_) {} }
+    if (window.SchoolsSeed) {
+      try { await window.SchoolsSeed.seedIfEmpty(); } catch (_) {}
+      // Non-destructively refresh preset schools' factual fields (ranking,
+      // subjects, registration…) when the seed data has been updated. Keeps
+      // the user's own edits, cut-offs, dates, log and photos.
+      try { await window.SchoolsSeed.migrate(); } catch (_) {}
+    }
     const settings = loadSettings();
     activeSubject = SUBJECTS.indexOf(settings.lastSubject) >= 0 ? settings.lastSubject : "vr";
     $("f-home-postcode").value = settings.homePostcode || "";

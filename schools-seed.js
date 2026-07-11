@@ -14,9 +14,26 @@
  * `postcode` drives the straight-line distance shown on each card: app.js
  * geocodes it via postcodes.io (cached) and measures from the home postcode.
  * There is no manual distance/travel-time field — distance is computed.
+ *
+ * Seed-owned factual fields (ranking, subjects, registration, etc.) are kept
+ * current on existing preset records by migrate(): bump SEED_VERSION when they
+ * change and it refreshes them on load without a destructive reset and without
+ * overwriting the user's own edits (cut-offs, exam/results dates, open day…).
  */
 (function () {
   "use strict";
+
+  // Bump whenever the factual seed fields below change (ranking, subjects,
+  // registration, etc.). On load, migrate() refreshes those fields on existing
+  // preset records whose stored version is older — so improvements reach users
+  // without a destructive reset and without touching their own edits.
+  const SEED_VERSION = 2;
+
+  // Fields owned by the seed (authoritative, refreshed on a version bump).
+  const SEED_OWNED = [
+    "postcode", "nationalRanking", "pan", "registration",
+    "subjectsSummary", "testsSubjects", "website", "notes",
+  ];
 
   const SEED_SCHOOLS = [
     {
@@ -72,15 +89,45 @@
     },
   ];
 
+  function stamp(seed) {
+    return Object.assign({}, seed, { seedSchoolVersion: SEED_VERSION });
+  }
+
   // Seed only when the schools store is empty, so it never clobbers user data.
   async function seedIfEmpty() {
     if (!window.EduStore) return false;
     const existing = await window.EduStore.getSchools();
     if (existing && existing.length) return false;
     for (const s of SEED_SCHOOLS) {
-      await window.EduStore.saveSchool(Object.assign({}, s));
+      await window.EduStore.saveSchool(stamp(s));
     }
     return true;
+  }
+
+  // Non-destructive: refresh the seed-owned (authoritative) fields on existing
+  // preset records whose stored seedSchoolVersion is older than SEED_VERSION.
+  // Matches by name, preserves the record id/createdAt and every user-owned
+  // field (historic cut-offs, exam/results dates, open day, catchment, etc.),
+  // and never touches schools the user added themselves. Returns how many were
+  // updated. Entries/photos are untouched.
+  async function migrate() {
+    if (!window.EduStore) return 0;
+    const existing = await window.EduStore.getSchools();
+    if (!existing || !existing.length) return 0;
+    const byName = {};
+    for (const e of existing) byName[e.name] = e;
+    let updated = 0;
+    for (const seed of SEED_SCHOOLS) {
+      const cur = byName[seed.name];
+      if (!cur) continue; // not a preset the user still has — leave alone
+      if ((cur.seedSchoolVersion || 0) >= SEED_VERSION) continue; // up to date
+      const next = Object.assign({}, cur);
+      for (const f of SEED_OWNED) next[f] = seed[f];
+      next.seedSchoolVersion = SEED_VERSION;
+      await window.EduStore.saveSchool(next);
+      updated++;
+    }
+    return updated;
   }
 
   // Deletes ALL schools and re-inserts the seed. Destructive — call only after
@@ -90,10 +137,10 @@
     const existing = await window.EduStore.getSchools();
     for (const s of existing) await window.EduStore.deleteSchool(s.id);
     for (const s of SEED_SCHOOLS) {
-      await window.EduStore.saveSchool(Object.assign({}, s));
+      await window.EduStore.saveSchool(stamp(s));
     }
     return true;
   }
 
-  window.SchoolsSeed = { SEED_SCHOOLS, seedIfEmpty, reseed };
+  window.SchoolsSeed = { SEED_SCHOOLS, SEED_VERSION, seedIfEmpty, migrate, reseed };
 })();
