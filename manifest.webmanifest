@@ -1,0 +1,25 @@
+{
+  "name": "Education Planner",
+  "short_name": "Ed Planner",
+  "description": "Track grammar-school entry prep: a school tracker plus a daily work log with progress charts and a readiness estimate against each school's historic cut-offs.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f4f7fb",
+  "theme_color": "#ffb020",
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

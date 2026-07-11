@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#ffb020" />
+  <title>Education Planner</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Ed Planner" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="app-header">
+    <h1>🎓 Education Planner</h1>
+    <p class="subtitle">Grammar-school prep &amp; daily progress</p>
+  </header>
+
+  <nav class="tabs" id="tabs">
+    <button class="tab active" data-view="schools">Schools</button>
+    <button class="tab" data-view="log">Daily Log</button>
+    <button class="tab" data-view="progress">Progress</button>
+  </nav>
+
+  <main>
+    <!-- ============ SCHOOLS ============ -->
+    <section id="view-schools" class="view">
+      <div class="view-actions">
+        <button id="add-school" class="btn-primary">+ Add school</button>
+      </div>
+      <div id="schools-list"></div>
+
+      <div id="school-form-wrap" class="card hidden">
+        <h2 id="school-form-title">Add school</h2>
+        <form id="school-form">
+          <input type="hidden" id="school-id" />
+          <div class="field">
+            <label for="f-name">School name *</label>
+            <input id="f-name" required placeholder="e.g. Nonsuch High School" />
+          </div>
+          <div class="grid-2">
+            <div class="field"><label for="f-distance">Distance</label><input id="f-distance" placeholder="e.g. 4.2 mi" /></div>
+            <div class="field"><label for="f-travel">Travel time</label><input id="f-travel" placeholder="e.g. 25 min" /></div>
+          </div>
+          <div class="grid-2">
+            <div class="field"><label for="f-ranking">National ranking</label><input id="f-ranking" placeholder="e.g. 12" /></div>
+            <div class="field"><label for="f-pan">PAN</label><input id="f-pan" placeholder="e.g. 180" /></div>
+          </div>
+          <div class="field"><label for="f-registration">Registration</label><textarea id="f-registration" rows="2" placeholder="How / when to register"></textarea></div>
+          <div class="grid-2">
+            <div class="field"><label for="f-exam">Exam date</label><input id="f-exam" type="date" /></div>
+            <div class="field"><label for="f-results">Results date</label><input id="f-results" type="date" /></div>
+          </div>
+          <div class="field"><label for="f-subjects">Subjects (summary)</label><textarea id="f-subjects" rows="2" placeholder="Notes on the test format"></textarea></div>
+          <div class="field">
+            <label>Subjects tested</label>
+            <div class="checks-row">
+              <label class="check-pill"><input type="checkbox" id="f-vr" /> VR</label>
+              <label class="check-pill"><input type="checkbox" id="f-nvr" /> NVR</label>
+              <label class="check-pill"><input type="checkbox" id="f-maths" /> Maths</label>
+              <label class="check-pill"><input type="checkbox" id="f-english" /> English</label>
+              <label class="check-pill"><input type="checkbox" id="f-creative" /> Creative Writing</label>
+            </div>
+          </div>
+          <div class="grid-2">
+            <div class="field"><label for="f-catchment">Catchment</label><input id="f-catchment" placeholder="e.g. Priority area" /></div>
+            <div class="field"><label for="f-admissions">Admission numbers</label><input id="f-admissions" placeholder="e.g. 1400 sat" /></div>
+          </div>
+          <div class="field">
+            <label>Historic cut-offs (year + score %)</label>
+            <div id="cutoffs-list"></div>
+            <button type="button" id="add-cutoff" class="btn-secondary">+ Add year</button>
+          </div>
+          <div class="grid-2">
+            <div class="field"><label for="f-openday">Open day</label><input id="f-openday" placeholder="e.g. 21 Sep 2026" /></div>
+            <div class="field"><label for="f-website">Website</label><input id="f-website" type="url" placeholder="https://" /></div>
+          </div>
+          <div class="field"><label for="f-notes">Personal notes</label><textarea id="f-notes" rows="3"></textarea></div>
+          <div class="form-actions">
+            <button type="submit" class="btn-primary">Save</button>
+            <button type="button" id="cancel-school" class="btn-secondary">Cancel</button>
+            <button type="button" id="delete-school" class="btn-danger hidden">Delete</button>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    <!-- ============ DAILY LOG ============ -->
+    <section id="view-log" class="view hidden">
+      <div class="card">
+        <h2>Log today's work</h2>
+        <form id="entry-form">
+          <div class="grid-2">
+            <div class="field">
+              <label for="e-subject">Subject</label>
+              <select id="e-subject">
+                <option value="vr">VR</option>
+                <option value="nvr">NVR</option>
+                <option value="maths">Maths</option>
+                <option value="english">English</option>
+              </select>
+            </div>
+            <div class="field"><label for="e-date">Date</label><input id="e-date" type="date" /></div>
+          </div>
+          <div class="grid-2">
+            <div class="field"><label for="e-raw">Score</label><input id="e-raw" type="number" min="0" step="1" placeholder="e.g. 18" /></div>
+            <div class="field"><label for="e-max">Out of</label><input id="e-max" type="number" min="1" step="1" placeholder="e.g. 20" /></div>
+          </div>
+          <p class="pct-preview">Percentage: <b id="e-pct">—</b></p>
+          <div class="field">
+            <label for="e-image">Photo of her work</label>
+            <input id="e-image" type="file" accept="image/*" capture="environment" />
+          </div>
+          <div class="field"><label for="e-note">Note (optional)</label><textarea id="e-note" rows="2"></textarea></div>
+          <div class="form-actions">
+            <button type="submit" class="btn-primary">Save entry</button>
+          </div>
+        </form>
+      </div>
+      <h2 class="section-heading">Recent entries</h2>
+      <div id="entries-list"></div>
+    </section>
+
+    <!-- ============ PROGRESS ============ -->
+    <section id="view-progress" class="view hidden">
+      <div class="card">
+        <h2>Progress by subject</h2>
+        <div class="chips" id="subject-chips"></div>
+        <div class="chart-wrap"><canvas id="chart" width="640" height="260"></canvas></div>
+      </div>
+      <div class="card">
+        <h2>Readiness</h2>
+        <p class="hint">Recent average vs each school's historic cut-off.</p>
+        <div id="readiness-list"></div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="app-footer">
+    <div class="backup-actions">
+      <button id="export-backup" class="btn-secondary">Export backup</button>
+      <label class="btn-secondary file-label">Import backup<input id="import-backup" type="file" accept="application/json" hidden /></label>
+    </div>
+    <span id="install-hint"></span>
+  </footer>
+
+  <script src="storage.js"></script>
+  <script src="app.js"></script>
+  <script>
+    // Register the service worker in production only. On localhost we skip it (and
+    // unregister any existing one) so code edits always show up on reload.
+    (function () {
+      if (!('serviceWorker' in navigator)) return;
+      var host = location.hostname;
+      var isLocal = host === 'localhost' || host === '127.0.0.1' || host === '';
+      if (isLocal) {
+        navigator.serviceWorker.getRegistrations().then(function (regs) {
+          regs.forEach(function (r) { r.unregister(); });
+        });
+        return;
+      }
+      window.addEventListener('load', function () {
+        navigator.serviceWorker.register('service-worker.js');
+      });
+    })();
+  </script>
+</body>
+</html>
