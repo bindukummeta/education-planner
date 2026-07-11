@@ -76,7 +76,7 @@ body {
 }
 .subtitle { margin: 5px 0 0; color: #45557a; font-size: 14px; font-weight: 500; }
 
-main { max-width: 720px; margin: 0 auto; padding: 16px 16px 40px; }
+main { width: 100%; margin: 0; padding: 16px 16px 40px; }
 
 .card {
   background: var(--card);
@@ -395,7 +395,6 @@ h2 { font-size: 18px; font-weight: 800; letter-spacing: -0.01em; margin: 0 0 14p
 .update-banner {
   position: fixed;
   left: 16px; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom, 0px));
-  max-width: 688px; margin: 0 auto;
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   padding: 14px 16px;
   background: linear-gradient(135deg, #262f45 0%, #1c2438 100%);
