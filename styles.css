@@ -168,6 +168,15 @@ h2 { font-size: 18px; margin: 0 0 14px; }
 .school-card h3 { margin: 0 0 8px; font-size: 17px; }
 .school-meta { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 13px; color: var(--muted); }
 .school-meta b { color: var(--text); font-weight: 600; }
+.school-link {
+  display: inline-block;
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 600;
+}
+.school-link:hover { text-decoration: underline; }
 
 /* ---- Entries ---- */
 .entry-row {

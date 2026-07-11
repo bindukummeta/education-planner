@@ -104,16 +104,33 @@
       const dist = await distanceLabel(s, homeCoord);
       const card = document.createElement("div");
       card.className = "school-card";
+      // Exam/results are exact per-cycle dates the user confirms; show "TBC"
+      // (to be confirmed) when blank rather than hiding the row.
+      const examVal = s.examDate ? esc(s.examDate) : "TBC";
+      const resultsVal = s.resultsDate ? esc(s.resultsDate) : "TBC";
       card.innerHTML =
         "<h3>" + esc(s.name) + "</h3>" +
         '<div class="school-meta">' +
         (dist ? "<span><b>Distance:</b> " + esc(dist) + "</span>" : "") +
         (s.nationalRanking ? "<span><b>Rank:</b> " + esc(s.nationalRanking) + "</span>" : "") +
-        (s.examDate ? "<span><b>Exam:</b> " + esc(s.examDate) + "</span>" : "") +
+        "<span><b>Exam:</b> " + examVal + "</span>" +
+        "<span><b>Results:</b> " + resultsVal + "</span>" +
         (cut != null ? "<span><b>Cut-off:</b> " + cut + "%</span>" : "") +
         "<span><b>Tests:</b> " + esc(tested) + "</span>" +
         "</div>";
       card.addEventListener("click", () => openSchoolForm(s));
+      // One-tap link to the school's official site to re-check dates. Stop the
+      // click bubbling so it opens the site rather than the edit form.
+      if (s.website) {
+        const link = document.createElement("a");
+        link.className = "school-link";
+        link.href = s.website;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = "Check school site ↗";
+        link.addEventListener("click", (ev) => ev.stopPropagation());
+        card.appendChild(link);
+      }
       list.appendChild(card);
     }
   }
