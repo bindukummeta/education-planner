@@ -113,6 +113,7 @@
         '<div class="school-meta">' +
         (dist ? "<span><b>Distance:</b> " + esc(dist) + "</span>" : "") +
         (s.nationalRanking ? "<span><b>Rank:</b> " + esc(s.nationalRanking) + "</span>" : "") +
+        (s.examBoard ? "<span><b>Board:</b> " + esc(s.examBoard) + "</span>" : "") +
         "<span><b>Exam:</b> " + examVal + "</span>" +
         "<span><b>Results:</b> " + resultsVal + "</span>" +
         (cut != null ? "<span><b>Cut-off:</b> " + cut + "%</span>" : "") +
@@ -168,6 +169,7 @@
     $("f-postcode").value = school ? school.postcode || "" : "";
     $("f-ranking").value = school ? school.nationalRanking || "" : "";
     $("f-pan").value = school ? school.pan || "" : "";
+    $("f-examboard").value = school ? school.examBoard || "" : "";
     $("f-registration").value = school ? school.registration || "" : "";
     $("f-exam").value = school ? school.examDate || "" : "";
     $("f-results").value = school ? school.resultsDate || "" : "";
@@ -208,6 +210,7 @@
       postcode: $("f-postcode").value.trim(),
       nationalRanking: $("f-ranking").value.trim(),
       pan: $("f-pan").value.trim(),
+      examBoard: $("f-examboard").value,
       registration: $("f-registration").value.trim(),
       examDate: $("f-exam").value,
       resultsDate: $("f-results").value,

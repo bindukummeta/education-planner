@@ -27,11 +27,11 @@
   // registration, etc.). On load, migrate() refreshes those fields on existing
   // preset records whose stored version is older — so improvements reach users
   // without a destructive reset and without touching their own edits.
-  const SEED_VERSION = 2;
+  const SEED_VERSION = 3;
 
   // Fields owned by the seed (authoritative, refreshed on a version bump).
   const SEED_OWNED = [
-    "postcode", "nationalRanking", "pan", "registration",
+    "postcode", "nationalRanking", "pan", "examBoard", "registration",
     "subjectsSummary", "testsSubjects", "website", "notes",
   ];
 
@@ -41,6 +41,7 @@
       postcode: "KT2 5PL",
       nationalRanking: "National 5 (The Sunday Times / The Times Parent Power Best Schools 2026, top state secondary schools). ⚠ Re-check yearly.",
       pan: "180",
+      examBoard: "Bespoke / consortium",
       registration: "2027 entry: online Supplementary Information Form (SIF) opens Tue 2 Jun 2026, closes 12:00 noon Tue 1 Sep 2026 (firm deadline, no late entries). Open Evening Tue 7 Jul 2026. ⚠ Re-check dates each year on the school site.",
       examDate: "",
       resultsDate: "",
@@ -58,6 +59,7 @@
       postcode: "SM3 8AB",
       nationalRanking: "National 13 (The Sunday Times / The Times Parent Power Best Schools 2026; also State Secondary School of the Year in the Southeast 2026). ⚠ Re-check yearly.",
       pan: "",
+      examBoard: "Bespoke / consortium",
       registration: "2027 entry (Sutton SET consortium): registration opens Fri 1 May 2026, closes Fri 31 Jul 2026 (access-arrangements deadline Fri 12 Jun 2026). SET Tue 15 Sep 2026; Stage 2 (NWSSEE, with Wallington) Sat 26 Sep 2026. Also name Nonsuch on the LA Common Application Form by 31 Oct. ⚠ Re-check dates each year.",
       examDate: "",
       resultsDate: "",
@@ -75,6 +77,7 @@
       postcode: "NW11 7BN",
       nationalRanking: "National 8 (The Sunday Times / The Times Parent Power Best Schools 2026, top state secondary schools). ⚠ Re-check yearly.",
       pan: "120",
+      examBoard: "GL Assessment",
       registration: "2027 entry: online entrance-test registration opens ~1 Apr 2026, closes 5pm Wed 1 Jul 2026 (no late applications). Open Day 30 Jun 2026 (booking required). Round 1 early Sep 2026. ⚠ Re-check dates each year on the school site.",
       examDate: "",
       resultsDate: "",
