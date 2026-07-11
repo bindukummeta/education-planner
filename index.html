@@ -185,34 +185,51 @@
       var reloadBtn = document.getElementById('update-reload');
       var registration = null;
       var refreshing = false;
+      var clicked = false;
 
-      // When the new SW takes control, reload once to pick up fresh assets.
-      navigator.serviceWorker.addEventListener('controllerchange', function () {
+      function doReload() {
         if (refreshing) return;
         refreshing = true;
         window.location.reload();
-      });
-
-      function activateUpdate() {
-        // Read the waiting worker fresh at click time (the one captured when the
-        // banner appeared may already have moved on).
-        var waiting = (registration && registration.waiting) || null;
-        if (waiting) {
-          waiting.postMessage('SKIP_WAITING');
-        }
-        // Fallback: if controllerchange doesn't fire (e.g. no waiting worker,
-        // or the message is missed), reload anyway so the button always works.
-        setTimeout(function () {
-          if (!refreshing) {
-            refreshing = true;
-            window.location.reload();
-          }
-        }, 1500);
       }
 
+      // When the new SW takes control, reload once to pick up fresh assets.
+      navigator.serviceWorker.addEventListener('controllerchange', doReload);
+
       function showUpdate() {
-        if (!banner) return;
-        banner.classList.remove('hidden');
+        if (banner) banner.classList.remove('hidden');
+      }
+
+      // Track a worker until it's installed-and-waiting, then reveal the banner.
+      function trackWorker(worker) {
+        if (!worker) return;
+        if (worker.state === 'installed') { showUpdate(); return; }
+        worker.addEventListener('statechange', function () {
+          if (worker.state === 'installed') showUpdate();
+        });
+      }
+
+      function activateUpdate() {
+        clicked = true;
+        // Ask the registration to re-check, so a freshly-waiting worker is
+        // definitely present, then message whichever worker is waiting.
+        function messageWaiting() {
+          var waiting = registration && registration.waiting;
+          if (waiting) {
+            // Also listen for it activating, as a second reload trigger.
+            waiting.addEventListener('statechange', function () {
+              if (waiting.state === 'activated') doReload();
+            });
+            waiting.postMessage('SKIP_WAITING');
+          }
+        }
+        messageWaiting();
+        if (registration && registration.update) {
+          registration.update().then(messageWaiting).catch(function () {});
+        }
+        // Guaranteed fallback: even if no worker swaps in, reload so the button
+        // always visibly does something and picks up network-first HTML.
+        setTimeout(doReload, 1500);
       }
 
       if (reloadBtn) reloadBtn.addEventListener('click', activateUpdate);
@@ -221,14 +238,12 @@
         navigator.serviceWorker.register('service-worker.js').then(function (reg) {
           registration = reg;
           // A worker already waiting (updated on a previous visit).
-          if (reg.waiting && navigator.serviceWorker.controller) showUpdate();
-          // A new worker found — prompt once it finishes installing.
+          if (reg.waiting) showUpdate();
+          // A worker currently installing — track it to completion.
+          if (reg.installing) trackWorker(reg.installing);
+          // A new worker found later — track it too.
           reg.addEventListener('updatefound', function () {
-            var nw = reg.installing;
-            if (!nw) return;
-            nw.addEventListener('statechange', function () {
-              if (nw.state === 'installed' && navigator.serviceWorker.controller) showUpdate();
-            });
+            trackWorker(reg.installing);
           });
         });
       });

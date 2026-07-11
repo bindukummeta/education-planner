@@ -5,10 +5,11 @@
  *
  * Only fields that are reliably published on the official sites are filled in.
  * Registration/key dates are for the current cycle and are marked to re-check
- * yearly. Cut-offs and rankings change yearly and are frequently not published
- * by the schools themselves, so they are left blank on purpose — fill them in
- * inside the app rather than trusting a guessed value (they drive the RAG
- * readiness calculation).
+ * yearly. National rankings are from The Times / Sunday Times Parent Power Best
+ * Schools 2026 table and are marked to re-check yearly (they change annually).
+ * Cut-offs change yearly and are frequently not published by the schools
+ * themselves, so they are left blank on purpose — fill them in inside the app
+ * rather than trusting a guessed value (they drive the RAG readiness calc).
  *
  * `postcode` drives the straight-line distance shown on each card: app.js
  * geocodes it via postcodes.io (cached) and measures from the home postcode.
@@ -21,7 +22,7 @@
     {
       name: "The Tiffin Girls' School",
       postcode: "KT2 5PL",
-      nationalRanking: "",
+      nationalRanking: "National 5 (The Sunday Times / The Times Parent Power Best Schools 2026, top state secondary schools). ⚠ Re-check yearly.",
       pan: "180",
       registration: "2027 entry: online Supplementary Information Form (SIF) opens Tue 2 Jun 2026, closes 12:00 noon Tue 1 Sep 2026 (firm deadline, no late entries). Open Evening Tue 7 Jul 2026. ⚠ Re-check dates each year on the school site.",
       examDate: "",
@@ -38,7 +39,7 @@
     {
       name: "Nonsuch High School for Girls",
       postcode: "SM3 8AB",
-      nationalRanking: "",
+      nationalRanking: "National 13 (The Sunday Times / The Times Parent Power Best Schools 2026; also State Secondary School of the Year in the Southeast 2026). ⚠ Re-check yearly.",
       pan: "",
       registration: "2027 entry (Sutton SET consortium): registration opens Fri 1 May 2026, closes Fri 31 Jul 2026 (access-arrangements deadline Fri 12 Jun 2026). SET Tue 15 Sep 2026; Stage 2 (NWSSEE, with Wallington) Sat 26 Sep 2026. Also name Nonsuch on the LA Common Application Form by 31 Oct. ⚠ Re-check dates each year.",
       examDate: "",
@@ -55,7 +56,7 @@
     {
       name: "The Henrietta Barnett School",
       postcode: "NW11 7BN",
-      nationalRanking: "",
+      nationalRanking: "National 8 (The Sunday Times / The Times Parent Power Best Schools 2026, top state secondary schools). ⚠ Re-check yearly.",
       pan: "120",
       registration: "2027 entry: online entrance-test registration opens ~1 Apr 2026, closes 5pm Wed 1 Jul 2026 (no late applications). Open Day 30 Jun 2026 (booking required). Round 1 early Sep 2026. ⚠ Re-check dates each year on the school site.",
       examDate: "",
