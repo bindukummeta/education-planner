@@ -77,6 +77,11 @@ h2 { font-size: 18px; margin: 0 0 14px; }
 
 .view-actions { display: flex; justify-content: flex-end; margin-bottom: 14px; }
 
+.settings-card .field { margin-bottom: 0; }
+.postcode-row { display: flex; gap: 10px; }
+.postcode-row input { flex: 1; }
+.postcode-row .btn-secondary { flex: 0 0 auto; }
+
 /* ---- Buttons ---- */
 .btn-primary, .btn-secondary, .btn-danger {
   padding: 12px 16px;

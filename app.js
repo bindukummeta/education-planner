@@ -26,6 +26,39 @@
   }
   function trackURL(u) { objectURLs.push(u); return u; }
 
+  // ---- geocoding + distance (postcodes.io, no API key) ----
+  const GEO_CACHE_PREFIX = "geo.";
+  function normPostcode(pc) { return String(pc || "").toUpperCase().replace(/\s+/g, ""); }
+
+  // Resolve a postcode to { lat, lon }. Cached in IndexedDB meta so the network
+  // is hit at most once per postcode; returns null offline / when not found.
+  async function geocode(postcode) {
+    const key = normPostcode(postcode);
+    if (!key) return null;
+    const cached = await EduStore.getMeta(GEO_CACHE_PREFIX + key);
+    if (cached) return cached;
+    try {
+      const res = await fetch("https://api.postcodes.io/postcodes/" + encodeURIComponent(key));
+      if (!res.ok) return null;
+      const data = await res.json();
+      const r = data && data.result;
+      if (!r || r.latitude == null || r.longitude == null) return null;
+      const coord = { lat: r.latitude, lon: r.longitude };
+      await EduStore.setMeta(GEO_CACHE_PREFIX + key, coord);
+      return coord;
+    } catch (_) { return null; }
+  }
+
+  // Great-circle distance in miles (Haversine).
+  function haversineMiles(a, b) {
+    const R = 3958.8;
+    const toRad = (d) => (d * Math.PI) / 180;
+    const dLat = toRad(b.lat - a.lat), dLon = toRad(b.lon - a.lon);
+    const s = Math.sin(dLat / 2) ** 2 +
+      Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLon / 2) ** 2;
+    return R * 2 * Math.atan2(Math.sqrt(s), Math.sqrt(1 - s));
+  }
+
   function todayISO() { return new Date().toISOString().slice(0, 10); }
   function esc(s) {
     return String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
@@ -45,6 +78,16 @@
   }
 
   // ============ SCHOOLS ============
+  // Straight-line miles from the home postcode to a school's postcode, or the
+  // manually-typed distance if either postcode / the network is unavailable.
+  async function distanceLabel(school, homeCoord) {
+    if (homeCoord && school.postcode) {
+      const c = await geocode(school.postcode);
+      if (c) return haversineMiles(homeCoord, c).toFixed(1) + " mi";
+    }
+    return school.distance || "";
+  }
+
   async function renderSchools() {
     const list = $("schools-list");
     const schools = await EduStore.getSchools();
@@ -52,16 +95,18 @@
       list.innerHTML = '<p class="empty">No schools yet. Tap “+ Add school”.</p>';
       return;
     }
+    const homeCoord = await geocode(loadSettings().homePostcode);
     list.innerHTML = "";
-    schools.forEach((s) => {
+    for (const s of schools) {
       const cut = latestCutoff(s);
       const tested = testedSubjects(s).map((k) => SUBJECT_LABEL[k]).join(", ") || "—";
+      const dist = await distanceLabel(s, homeCoord);
       const card = document.createElement("div");
       card.className = "school-card";
       card.innerHTML =
         "<h3>" + esc(s.name) + "</h3>" +
         '<div class="school-meta">' +
-        (s.distance ? "<span><b>Distance:</b> " + esc(s.distance) + "</span>" : "") +
+        (dist ? "<span><b>Distance:</b> " + esc(dist) + "</span>" : "") +
         (s.travelTime ? "<span><b>Travel:</b> " + esc(s.travelTime) + "</span>" : "") +
         (s.nationalRanking ? "<span><b>Rank:</b> " + esc(s.nationalRanking) + "</span>" : "") +
         (s.examDate ? "<span><b>Exam:</b> " + esc(s.examDate) + "</span>" : "") +
@@ -70,7 +115,7 @@
         "</div>";
       card.addEventListener("click", () => openSchoolForm(s));
       list.appendChild(card);
-    });
+    }
   }
 
   function testedSubjects(s) {
@@ -103,6 +148,7 @@
     $("school-form-title").textContent = school ? "Edit school" : "Add school";
     $("school-id").value = school ? school.id : "";
     $("f-name").value = school ? school.name || "" : "";
+    $("f-postcode").value = school ? school.postcode || "" : "";
     $("f-distance").value = school ? school.distance || "" : "";
     $("f-travel").value = school ? school.travelTime || "" : "";
     $("f-ranking").value = school ? school.nationalRanking || "" : "";
@@ -144,6 +190,7 @@
     const school = {
       id: $("school-id").value || undefined,
       name: $("f-name").value.trim(),
+      postcode: $("f-postcode").value.trim(),
       distance: $("f-distance").value.trim(),
       travelTime: $("f-travel").value.trim(),
       nationalRanking: $("f-ranking").value.trim(),
@@ -423,14 +470,31 @@
     fr.readAsText(file);
   }
 
+  // ---- home postcode ----
+  async function saveHomePostcode() {
+    const pc = $("f-home-postcode").value.trim();
+    saveSettings({ homePostcode: pc });
+    const hint = $("postcode-hint");
+    if (!pc) { hint.textContent = "Cleared. Distances will show your typed values only."; renderSchools(); return; }
+    hint.textContent = "Looking up…";
+    const coord = await geocode(pc);
+    hint.textContent = coord
+      ? "Saved. Distances updated below."
+      : "Saved, but couldn't look up that postcode (check it, or you may be offline).";
+    renderSchools();
+  }
+
   // ============ INIT ============
   async function init() {
     await EduStore.ready();
+    if (window.SchoolsSeed) { try { await window.SchoolsSeed.seedIfEmpty(); } catch (_) {} }
     const settings = loadSettings();
     activeSubject = SUBJECTS.indexOf(settings.lastSubject) >= 0 ? settings.lastSubject : "vr";
+    $("f-home-postcode").value = settings.homePostcode || "";
 
     document.querySelectorAll(".tab").forEach((t) =>
       t.addEventListener("click", () => showView(t.dataset.view)));
+    $("save-home-postcode").addEventListener("click", saveHomePostcode);
     $("add-school").addEventListener("click", () => openSchoolForm(null));
     $("cancel-school").addEventListener("click", closeSchoolForm);
     $("delete-school").addEventListener("click", removeSchool);

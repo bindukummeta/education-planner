@@ -1,9 +1,10 @@
-const CACHE = "eduplanner-v1";
+const CACHE = "eduplanner-v2";
 const ASSETS = [
   "./",
   "./index.html",
   "./styles.css",
   "./storage.js",
+  "./schools-seed.js",
   "./app.js",
   "./manifest.webmanifest",
   "./icons/icon-192.png",
