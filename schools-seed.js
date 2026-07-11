@@ -27,12 +27,26 @@
   // registration, etc.). On load, migrate() refreshes those fields on existing
   // preset records whose stored version is older — so improvements reach users
   // without a destructive reset and without touching their own edits.
-  const SEED_VERSION = 4;
+  const SEED_VERSION = 5;
 
   // Fields owned by the seed (authoritative, refreshed on a version bump).
   const SEED_OWNED = [
     "postcode", "nationalRanking", "pan", "examBoard", "registration",
     "subjectsSummary", "testsSubjects", "website", "notes",
+  ];
+
+  // Meta key holding the list of preset names ever introduced onto this device.
+  // Lets migrate() insert genuinely-new presets exactly once while never
+  // resurrecting a preset the user deleted on purpose.
+  const INTRODUCED_KEY = "seedIntroducedNames";
+
+  // Presets that shipped before the introduced-names watermark existed. On the
+  // first run of the watermark-aware migrate() we treat these as already
+  // introduced, so a user who had deleted one of them won't have it re-added.
+  const LEGACY_SEED_NAMES = [
+    "The Tiffin Girls' School",
+    "Nonsuch High School for Girls",
+    "The Henrietta Barnett School",
   ];
 
   const SEED_SCHOOLS = [
@@ -90,10 +104,46 @@
       website: "https://www.hbschool.org.uk/",
       notes: "Non-denominational grammar for girls 11–18. Central Square, Hampstead Garden Suburb, London NW11 7BN. Tel 020 8458 8999.",
     },
+    {
+      name: "Wallington High School for Girls",
+      postcode: "SM6 0PH",
+      nationalRanking: "",
+      pan: "210",
+      examBoard: "Bespoke / consortium",
+      registration: "2027 entry (Sutton SET consortium): registration opens Fri 1 May 2026, closes Fri 31 Jul 2026 (access-arrangements deadline Fri 12 Jun 2026). SET Tue 15 Sep 2026; Stage 2 (NWSSEE, with Nonsuch) Sat 26 Sep 2026. Also name Wallington on the LA Common Application Form by 31 Oct. ⚠ Re-check dates each year.",
+      examDate: "",
+      resultsDate: "",
+      subjectsSummary: "Two-stage test in English & Maths (no VR/NVR). Stage 1 (Sutton SET): multiple-choice English + Maths. Stage 2 (NWSSEE, joint with Nonsuch): written English (incl. a writing task, no comprehension) + Maths, not multiple-choice (each paper 40–50 min).",
+      testsSubjects: { vr: false, nvr: false, maths: true, english: true, creativeWriting: true },
+      catchment: "",
+      admissionNumbers: "",
+      historicCutoffs: [],
+      openDay: "",
+      website: "https://www.wallingtongirls.org.uk/",
+      notes: "Part of the Girls' Learning Trust. Woodcote Road, Wallington, Surrey SM6 0PH. Tel 020 8394 3400 (admissions@girlslearningtrust.org).",
+    },
   ];
 
   function stamp(seed) {
     return Object.assign({}, seed, { seedSchoolVersion: SEED_VERSION });
+  }
+
+  // Read the watermark of preset names ever introduced onto this device.
+  // Returns a plain object used as a set ({ name: true }).
+  async function getIntroduced() {
+    if (!window.EduStore || !window.EduStore.getMeta) return null;
+    const stored = await window.EduStore.getMeta(INTRODUCED_KEY);
+    if (!Array.isArray(stored)) return null;
+    const set = {};
+    for (const n of stored) set[n] = true;
+    return set;
+  }
+  async function setIntroduced(set) {
+    if (!window.EduStore || !window.EduStore.setMeta) return;
+    await window.EduStore.setMeta(INTRODUCED_KEY, Object.keys(set));
+  }
+  function allSeedNames() {
+    return SEED_SCHOOLS.map((s) => s.name);
   }
 
   // Seed only when the schools store is empty, so it never clobbers user data.
@@ -104,33 +154,63 @@
     for (const s of SEED_SCHOOLS) {
       await window.EduStore.saveSchool(stamp(s));
     }
+    // Record every seeded name so migrate() never re-adds one after deletion.
+    const set = {};
+    for (const n of allSeedNames()) set[n] = true;
+    await setIntroduced(set);
     return true;
   }
 
-  // Non-destructive: refresh the seed-owned (authoritative) fields on existing
-  // preset records whose stored seedSchoolVersion is older than SEED_VERSION.
-  // Matches by name, preserves the record id/createdAt and every user-owned
+  // Non-destructive migrate. Two responsibilities:
+  //  1) Refresh the seed-owned (authoritative) fields on existing preset
+  //     records whose stored seedSchoolVersion is older than SEED_VERSION.
+  //  2) Insert genuinely-new presets (never seen on this device) exactly once,
+  //     tracked via the INTRODUCED_KEY watermark so a preset the user deleted
+  //     on purpose is never resurrected.
+  // Matches by name, preserves each record's id/createdAt and every user-owned
   // field (historic cut-offs, exam/results dates, open day, catchment, etc.),
-  // and never touches schools the user added themselves. Returns how many were
-  // updated. Entries/photos are untouched.
+  // and never touches schools the user added themselves. Returns the number of
+  // records updated or inserted. Entries/photos are untouched.
   async function migrate() {
     if (!window.EduStore) return 0;
     const existing = await window.EduStore.getSchools();
     if (!existing || !existing.length) return 0;
     const byName = {};
     for (const e of existing) byName[e.name] = e;
-    let updated = 0;
+
+    // First run of the watermark-aware code: seed the watermark with the
+    // legacy presets (plus any of them still present) so previously-deleted
+    // legacy presets are treated as already introduced, not new.
+    let introduced = await getIntroduced();
+    if (!introduced) {
+      introduced = {};
+      for (const n of LEGACY_SEED_NAMES) introduced[n] = true;
+      for (const e of existing) introduced[e.name] = true;
+    }
+
+    let changed = 0;
     for (const seed of SEED_SCHOOLS) {
       const cur = byName[seed.name];
-      if (!cur) continue; // not a preset the user still has — leave alone
+      if (!cur) {
+        // Not currently in the DB. Insert it only if it's a genuinely-new
+        // preset we've never introduced here; otherwise the user deleted it.
+        if (!introduced[seed.name]) {
+          await window.EduStore.saveSchool(stamp(seed));
+          introduced[seed.name] = true;
+          changed++;
+        }
+        continue;
+      }
+      introduced[seed.name] = true; // present now — record it
       if ((cur.seedSchoolVersion || 0) >= SEED_VERSION) continue; // up to date
       const next = Object.assign({}, cur);
       for (const f of SEED_OWNED) next[f] = seed[f];
       next.seedSchoolVersion = SEED_VERSION;
       await window.EduStore.saveSchool(next);
-      updated++;
+      changed++;
     }
-    return updated;
+    await setIntroduced(introduced);
+    return changed;
   }
 
   // Deletes ALL schools and re-inserts the seed. Destructive — call only after
@@ -142,6 +222,10 @@
     for (const s of SEED_SCHOOLS) {
       await window.EduStore.saveSchool(stamp(s));
     }
+    // A reset re-introduces every preset, so reset the watermark accordingly.
+    const set = {};
+    for (const n of allSeedNames()) set[n] = true;
+    await setIntroduced(set);
     return true;
   }
 
