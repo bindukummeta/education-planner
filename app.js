@@ -64,6 +64,14 @@
     return String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
       ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   }
+  // Compact label for the Rank chip: pull the leading rank (e.g. "National 5")
+  // out of the long seeded sentence when it starts with a rank; otherwise keep
+  // the user's text (possibly clipped by CSS). Full text is the chip's tooltip.
+  function shortRank(text) {
+    const s = String(text || "").trim();
+    const m = s.match(/^(?:national\s+|no\.?\s*|#)?(\d+)\b/i);
+    return m ? "National " + m[1] : s;
+  }
 
   // ---- view switching ----
   function showView(name) {
@@ -81,12 +89,12 @@
   // Straight-line miles from the home postcode to a school's postcode.
   // Computed live (no manual value) — blank until a home postcode is set and
   // both postcodes geocode successfully.
-  async function distanceLabel(school, homeCoord) {
+  async function distanceMiles(school, homeCoord) {
     if (homeCoord && school.postcode) {
       const c = await geocode(school.postcode);
-      if (c) return haversineMiles(homeCoord, c).toFixed(1) + " mi";
+      if (c) return haversineMiles(homeCoord, c);
     }
-    return "";
+    return null;
   }
 
   async function renderSchools() {
@@ -97,11 +105,26 @@
       return;
     }
     const homeCoord = await geocode(loadSettings().homePostcode);
-    list.innerHTML = "";
+    // Compute each school's distance once, then order nearest-first. Schools
+    // with no computable distance (no home postcode set, or offline/geocode
+    // failed) sort to the end, keeping alphabetical order among ties.
+    const items = [];
     for (const s of schools) {
+      const mi = await distanceMiles(s, homeCoord);
+      items.push({ school: s, miles: mi });
+    }
+    items.sort((a, b) => {
+      const am = a.miles == null ? Infinity : a.miles;
+      const bm = b.miles == null ? Infinity : b.miles;
+      if (am !== bm) return am - bm;
+      return (a.school.name || "").localeCompare(b.school.name || "");
+    });
+    list.innerHTML = "";
+    for (const it of items) {
+      const s = it.school;
       const cut = latestCutoff(s);
       const tested = testedSubjects(s).map((k) => SUBJECT_LABEL[k]).join(", ") || "—";
-      const dist = await distanceLabel(s, homeCoord);
+      const dist = it.miles == null ? "" : it.miles.toFixed(1) + " mi";
       const card = document.createElement("div");
       card.className = "school-card";
       // Exam/results are exact per-cycle dates the user confirms; show "TBC"
@@ -112,7 +135,7 @@
         "<h3>" + esc(s.name) + "</h3>" +
         '<div class="school-meta">' +
         (dist ? "<span><b>Distance:</b> " + esc(dist) + "</span>" : "") +
-        (s.nationalRanking ? "<span><b>Rank:</b> " + esc(s.nationalRanking) + "</span>" : "") +
+        (s.nationalRanking ? '<span title="' + esc(s.nationalRanking) + '"><b>Rank:</b> ' + esc(shortRank(s.nationalRanking)) + "</span>" : "") +
         (s.examBoard ? "<span><b>Board:</b> " + esc(s.examBoard) + "</span>" : "") +
         "<span><b>Exam:</b> " + examVal + "</span>" +
         "<span><b>Results:</b> " + resultsVal + "</span>" +
