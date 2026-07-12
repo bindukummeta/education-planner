@@ -6,6 +6,10 @@
   const SUBJECTS = ["vr", "nvr", "maths", "english", "creativeWriting"];
   const SUBJECT_LABEL = { vr: "VR", nvr: "NVR", maths: "Maths", english: "English", creativeWriting: "Creative Writing" };
   const RECENT_N = 5;
+  const DIFFICULTY_LABEL = { easy: "Easy", medium: "Medium", hard: "Hard" };
+  const DIFFICULTY_ORDER = { easy: 1, medium: 2, hard: 3 };
+  function difficultyOrdinal(d) { return DIFFICULTY_ORDER[d] || null; }
+  function normDifficulty(d) { return DIFFICULTY_ORDER[d] ? d : ""; }
 
   let activeSubject = "vr";
   let objectURLs = [];
@@ -141,6 +145,7 @@
         "<span><b>Results:</b> " + resultsVal + "</span>" +
         (cut != null ? "<span><b>Cut-off:</b> " + cut + "%</span>" : "") +
         "<span><b>Tests:</b> " + esc(tested) + "</span>" +
+        (s.targetDifficulty ? "<span><b>Level:</b> " + esc(DIFFICULTY_LABEL[s.targetDifficulty] || s.targetDifficulty) + "</span>" : "") +
         "</div>";
       card.addEventListener("click", () => openSchoolForm(s));
       // One-tap link to the school's official site to re-check dates. Stop the
@@ -201,6 +206,7 @@
     $("f-vr").checked = !!t.vr; $("f-nvr").checked = !!t.nvr;
     $("f-maths").checked = !!t.maths; $("f-english").checked = !!t.english;
     $("f-creative").checked = !!t.creativeWriting;
+    $("f-difficulty").value = (school && school.targetDifficulty) || "";
     $("f-catchment").value = school ? school.catchment || "" : "";
     $("f-admissions").value = school ? school.admissionNumbers || "" : "";
     $("f-openday").value = school ? school.openDay || "" : "";
@@ -242,6 +248,7 @@
         vr: $("f-vr").checked, nvr: $("f-nvr").checked, maths: $("f-maths").checked,
         english: $("f-english").checked, creativeWriting: $("f-creative").checked,
       },
+      targetDifficulty: $("f-difficulty").value || "",
       catchment: $("f-catchment").value.trim(),
       admissionNumbers: $("f-admissions").value.trim(),
       historicCutoffs: cutoffs,
@@ -309,9 +316,12 @@
     e.preventDefault();
     const pct = derivedPct();
     const subject = $("e-subject").value;
+    const difficulty = normDifficulty($("e-difficulty").value);
     const entry = {
       date: $("e-date").value || todayISO(),
       subject: subject,
+      topic: $("e-topic").value.trim(),
+      difficulty: difficulty,
       scoreRaw: $("e-raw").value === "" ? null : Number($("e-raw").value),
       scoreMax: $("e-max").value === "" ? null : Number($("e-max").value),
       scorePct: pct,
@@ -324,10 +334,11 @@
       entry.blobId = await EduStore.putBlob(blob, "image/jpeg");
     }
     await EduStore.addEntry(entry);
-    saveSettings({ lastSubject: subject });
+    saveSettings({ lastSubject: subject, lastDifficulty: difficulty });
     $("entry-form").reset();
     $("e-date").value = todayISO();
     $("e-subject").value = subject;
+    $("e-difficulty").value = difficulty;
     updatePctPreview();
     renderEntries();
   }
@@ -351,11 +362,15 @@
       }
       const badge = en.scorePct == null ? "" :
         '<span class="score-badge">' + (en.scoreRaw != null && en.scoreMax != null ? en.scoreRaw + "/" + en.scoreMax + " · " : "") + en.scorePct + "%</span>";
+      const diffChip = en.difficulty ?
+        '<span class="entry-diff diff-' + esc(en.difficulty) + '">' + esc(DIFFICULTY_LABEL[en.difficulty] || en.difficulty) + "</span>" : "";
+      const topicChip = en.topic ? '<p class="entry-topic">' + esc(en.topic) + "</p>" : "";
       row.innerHTML =
         thumb +
         '<div class="entry-body"><div class="entry-top">' +
         '<span class="entry-subj">' + esc(SUBJECT_LABEL[en.subject] || en.subject) + "</span>" +
-        '<span class="entry-date">' + esc(en.date) + "</span>" + badge + "</div>" +
+        '<span class="entry-date">' + esc(en.date) + "</span>" + badge + diffChip + "</div>" +
+        topicChip +
         (en.note ? '<p class="entry-note">' + esc(en.note) + "</p>" : "") +
         "</div>" +
         '<button class="entry-del" aria-label="Delete">🗑</button>';
@@ -429,11 +444,24 @@
     ctx.fillText(last.pct + "%", x(n - 1), y(last.pct) - 12);
   }
 
-  async function subjectRecentAvg(subject) {
-    const entries = (await EduStore.getEntries({ subject: subject })).filter((e) => e.scorePct != null);
-    if (!entries.length) return null;
-    const recent = entries.slice(-RECENT_N);
-    return recent.reduce((a, e) => a + e.scorePct, 0) / recent.length;
+  // Recent-average for a subject at (or above) a difficulty floor. Entries
+  // whose tagged difficulty ordinal is >= floorOrd count; untagged entries
+  // always count (backward-compatible) but are flagged so the UI can note the
+  // average mixes levels. floorOrd 0/null means "any difficulty" (all count).
+  // Returns { avg, usedUntagged } from the most recent RECENT_N matches, or
+  // null when nothing matches.
+  async function subjectRecentAvg(subject, floorOrd) {
+    const scored = (await EduStore.getEntries({ subject: subject })).filter((e) => e.scorePct != null);
+    if (!scored.length) return null;
+    const floor = floorOrd || 0;
+    const matched = scored.filter((e) => {
+      const ord = difficultyOrdinal(e.difficulty);
+      return ord == null ? true : ord >= floor;
+    });
+    if (!matched.length) return null;
+    const recent = matched.slice(-RECENT_N);
+    const usedUntagged = recent.some((e) => difficultyOrdinal(e.difficulty) == null);
+    return { avg: recent.reduce((a, e) => a + e.scorePct, 0) / recent.length, usedUntagged: usedUntagged };
   }
 
   async function renderReadiness() {
@@ -443,29 +471,45 @@
       list.innerHTML = '<p class="empty">Add a school to see readiness.</p>';
       return;
     }
-    const avgCache = {};
-    for (const s of SUBJECTS) avgCache[s] = await subjectRecentAvg(s);
+    // Memoise per (subject, difficulty-floor) so each band is computed once.
+    const bandCache = {};
+    async function bandAvg(subject, floorOrd) {
+      const key = subject + "|" + (floorOrd || 0);
+      if (!(key in bandCache)) bandCache[key] = await subjectRecentAvg(subject, floorOrd);
+      return bandCache[key];
+    }
 
     const rows = [];
     for (const s of schools) {
       const tested = testedSubjects(s);
       const cutoff = latestCutoff(s);
+      // The school's target difficulty sets the floor: work must be at that
+      // level (or harder) to demonstrate readiness. No target => any level.
+      const floorOrd = difficultyOrdinal(s.targetDifficulty) || 0;
       let rag = "rag-none", label = "", detail = "", sortGap = -Infinity;
       if (!tested.length) { label = "No subjects set"; }
       else if (cutoff == null) { label = "No cut-off recorded"; }
       else {
-        const have = tested.filter((t) => avgCache[t] != null);
-        if (!have.length) { label = "Not enough data yet"; }
-        else {
-          const recentPct = have.reduce((a, t) => a + avgCache[t], 0) / have.length;
+        const results = [];
+        for (const t of tested) {
+          const r = await bandAvg(t, floorOrd);
+          if (r != null) results.push(r);
+        }
+        if (!results.length) {
+          label = floorOrd ? "No " + DIFFICULTY_LABEL[s.targetDifficulty] + "-level data yet" : "Not enough data yet";
+        } else {
+          const recentPct = results.reduce((a, r) => a + r.avg, 0) / results.length;
           const gap = recentPct - cutoff;
           sortGap = gap;
           const g = Math.abs(Math.round(gap));
           if (gap >= 0) { rag = "rag-green"; label = "On track (+" + Math.round(gap) + ")"; }
           else if (gap >= -10) { rag = "rag-amber"; label = "Close (" + g + " below)"; }
           else { rag = "rag-red"; label = "Needs work (" + g + " below)"; }
+          const mixedLevels = floorOrd && results.some((r) => r.usedUntagged);
           detail = "Recent avg " + Math.round(recentPct) + "% vs cut-off " + cutoff + "%" +
-            (have.length < tested.length ? " · partial data" : "");
+            (floorOrd ? " · at " + DIFFICULTY_LABEL[s.targetDifficulty] + " level" : "") +
+            (results.length < tested.length ? " · partial data" : "") +
+            (mixedLevels ? " · mixed levels" : "");
         }
       }
       rows.push({ name: s.name, rag, label, detail, sortGap });
@@ -569,6 +613,7 @@
 
     $("e-date").value = todayISO();
     $("e-subject").value = activeSubject;
+    $("e-difficulty").value = normDifficulty(settings.lastDifficulty);
     showView("schools");
     renderSchools();
   }

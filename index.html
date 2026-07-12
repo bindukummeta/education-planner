@@ -87,6 +87,15 @@
               <label class="check-pill"><input type="checkbox" id="f-creative" /> Creative Writing</label>
             </div>
           </div>
+          <div class="field">
+            <label for="f-difficulty">Test difficulty (how demanding this school is)</label>
+            <select id="f-difficulty">
+              <option value="">— not set —</option>
+              <option value="easy">Easy</option>
+              <option value="medium">Medium</option>
+              <option value="hard">Hard (superselective)</option>
+            </select>
+          </div>
           <div class="grid-2">
             <div class="field"><label for="f-catchment">Catchment</label><input id="f-catchment" placeholder="e.g. Priority area" /></div>
             <div class="field"><label for="f-admissions">Admission numbers</label><input id="f-admissions" placeholder="e.g. 1400 sat" /></div>
@@ -131,6 +140,18 @@
           <div class="grid-2">
             <div class="field"><label for="e-raw">Score</label><input id="e-raw" type="number" min="0" step="1" placeholder="e.g. 18" /></div>
             <div class="field"><label for="e-max">Out of</label><input id="e-max" type="number" min="1" step="1" placeholder="e.g. 20" /></div>
+          </div>
+          <div class="grid-2">
+            <div class="field"><label for="e-topic">Topic (optional)</label><input id="e-topic" placeholder="e.g. VR cloze" /></div>
+            <div class="field">
+              <label for="e-difficulty">Difficulty</label>
+              <select id="e-difficulty">
+                <option value="">— not set —</option>
+                <option value="easy">Easy</option>
+                <option value="medium">Medium</option>
+                <option value="hard">Hard</option>
+              </select>
+            </div>
           </div>
           <p class="pct-preview">Percentage: <b id="e-pct">—</b></p>
           <div class="field">

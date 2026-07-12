@@ -309,6 +309,11 @@ h2 { font-size: 18px; font-weight: 800; letter-spacing: -0.01em; margin: 0 0 14p
 .entry-subj { font-weight: 700; font-size: 15px; }
 .entry-date { color: var(--muted); font-size: 13px; }
 .entry-note { color: var(--muted); font-size: 13px; margin: 4px 0 0; }
+.entry-topic { color: var(--muted); font-size: 12px; font-weight: 600; margin: 4px 0 0; }
+.entry-diff { padding: 2px 9px; border-radius: var(--r-pill); font-size: 12px; font-weight: 700; }
+.diff-easy { background: var(--rag-green); color: #fff; }
+.diff-medium { background: var(--rag-amber); color: var(--accent-ink); }
+.diff-hard { background: var(--rag-red); color: #fff; }
 .score-badge {
   padding: 2px 10px;
   border-radius: var(--r-pill);

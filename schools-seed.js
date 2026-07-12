@@ -27,7 +27,7 @@
   // registration, etc.). On load, migrate() refreshes those fields on existing
   // preset records whose stored version is older — so improvements reach users
   // without a destructive reset and without touching their own edits.
-  const SEED_VERSION = 8;
+  const SEED_VERSION = 9;
 
   // Fields owned by the seed (authoritative, refreshed on a version bump).
   const SEED_OWNED = [
@@ -61,6 +61,7 @@
       resultsDate: "",
       subjectsSummary: "Two-stage test in English & Maths. Stage 1: multiple-choice English + Maths (computer-marked, under 60 min each). Stage 2: written English (reading comprehension + creative writing) + Maths.",
       testsSubjects: { vr: false, nvr: false, maths: true, english: true, creativeWriting: true },
+      targetDifficulty: "hard",
       catchment: "",
       admissionNumbers: "",
       historicCutoffs: [],
@@ -79,6 +80,7 @@
       resultsDate: "",
       subjectsSummary: "Two-stage test in English & Maths (no VR/NVR). Stage 1 (Sutton SET): multiple-choice English + Maths. Stage 2 (NWSSEE, joint with Wallington): written English (incl. a writing task) + Maths, not multiple-choice.",
       testsSubjects: { vr: false, nvr: false, maths: true, english: true, creativeWriting: true },
+      targetDifficulty: "hard",
       catchment: "",
       admissionNumbers: "",
       historicCutoffs: [],
@@ -97,6 +99,7 @@
       resultsDate: "",
       subjectsSummary: "Two-round test. Round 1 (GL Assessment): multiple-choice Verbal Reasoning, Non-Verbal Reasoning & English (computer-marked); top ~300 invited to Round 2. Round 2: written English (comprehension + creative writing) + Maths.",
       testsSubjects: { vr: true, nvr: true, maths: true, english: true, creativeWriting: true },
+      targetDifficulty: "hard",
       catchment: "",
       admissionNumbers: "",
       historicCutoffs: [],
@@ -115,6 +118,7 @@
       resultsDate: "",
       subjectsSummary: "Two-stage test in English & Maths (no VR/NVR). Stage 1 (Sutton SET): multiple-choice English + Maths. Stage 2 (NWSSEE, joint with Nonsuch): written English (incl. a writing task, no comprehension) + Maths, not multiple-choice (each paper 40–50 min).",
       testsSubjects: { vr: false, nvr: false, maths: true, english: true, creativeWriting: true },
+      targetDifficulty: "hard",
       catchment: "",
       admissionNumbers: "",
       historicCutoffs: [],
@@ -133,6 +137,7 @@
       resultsDate: "",
       subjectsSummary: "SW Herts Consortium test (GL Assessment): Maths + Verbal Reasoning, ~50 min each. ⚠ Only 52 of 210 places (25%) are academic-selective — 137 are distance/community places (non-selective) + 21 music aptitude.",
       testsSubjects: { vr: true, nvr: false, maths: true, english: false, creativeWriting: false },
+      targetDifficulty: "medium",
       catchment: "",
       admissionNumbers: "",
       historicCutoffs: [],
@@ -151,6 +156,7 @@
       resultsDate: "",
       subjectsSummary: "Buckinghamshire Secondary Transfer Test (STT), qualifying score 121. Two papers covering Verbal Reasoning, Non-Verbal Reasoning and Maths (GL-style, administered by Bucks Council). ⚠ Catchment-based: out-of-catchment qualified applicants are ranked lower.",
       testsSubjects: { vr: true, nvr: true, maths: true, english: false, creativeWriting: false },
+      targetDifficulty: "medium",
       catchment: "",
       admissionNumbers: "",
       historicCutoffs: [],
@@ -238,10 +244,19 @@
         continue;
       }
       introduced[seed.name] = true; // present now — record it
-      if ((cur.seedSchoolVersion || 0) >= SEED_VERSION) continue; // up to date
+      // Fill-if-missing: targetDifficulty is user-owned (not in SEED_OWNED), so
+      // we only seed a suggested default when the record has none yet. This
+      // backfills presets that predate the field without clobbering user edits,
+      // and runs even for records already at the current version.
+      const needsFill = !cur.targetDifficulty && seed.targetDifficulty;
+      const needsVersion = (cur.seedSchoolVersion || 0) < SEED_VERSION;
+      if (!needsFill && !needsVersion) continue; // up to date
       const next = Object.assign({}, cur);
-      for (const f of SEED_OWNED) next[f] = seed[f];
-      next.seedSchoolVersion = SEED_VERSION;
+      if (needsFill) next.targetDifficulty = seed.targetDifficulty;
+      if (needsVersion) {
+        for (const f of SEED_OWNED) next[f] = seed[f];
+        next.seedSchoolVersion = SEED_VERSION;
+      }
       await window.EduStore.saveSchool(next);
       changed++;
     }
