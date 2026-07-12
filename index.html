@@ -31,6 +31,7 @@
       <li><button class="nav-item" data-view="reading"><span class="nav-ico">📚</span><span class="nav-label">Reading</span></button></li>
       <li><button class="nav-item" data-view="mocks"><span class="nav-ico">📝</span><span class="nav-label">Mock Papers</span></button></li>
       <li><button class="nav-item" data-view="playcreate"><span class="nav-ico">🎮</span><span class="nav-label">Play &amp; Create</span></button></li>
+      <li><button class="nav-item" data-view="curiosity"><span class="nav-ico">💡</span><span class="nav-label">Curiosity</span></button></li>
       <li><button class="nav-item" data-view="progress"><span class="nav-ico">📈</span><span class="nav-label">Progress</span></button></li>
       <li><button class="nav-item" data-view="coach"><span class="nav-ico">🎯</span><span class="nav-label">AI Coach</span></button></li>
       <li><button class="nav-item" data-view="calendar"><span class="nav-ico">📅</span><span class="nav-label">Calendar</span></button></li>
@@ -60,6 +61,7 @@
       </div>
       <div class="view-actions">
         <button type="button" class="btn-primary" data-goto="playcreate">🎮 Play &amp; Create</button>
+        <button type="button" class="btn-secondary" data-goto="curiosity" data-goto-then="cur-add">💡 I wonder…</button>
         <button type="button" class="btn-secondary" data-goto="log">＋ Log work</button>
       </div>
     </section>
@@ -326,6 +328,21 @@
       <div class="pc-grid" id="pc-create-grid"></div>
       <h2 class="section-heading">My Projects</h2>
       <div id="pc-projects"></div>
+    </section>
+
+    <!-- ============ CURIOSITY ============ -->
+    <section id="view-curiosity" class="view hidden">
+      <div class="card">
+        <h2>💡 Curiosity</h2>
+        <p class="hint">Wondered about something? Made a discovery? Capture it here — your sparks stay saved and connect to your work.</p>
+      </div>
+      <div class="view-actions">
+        <button type="button" id="cur-add" class="btn-primary">💡 I wonder…</button>
+        <button type="button" id="cur-add-parent" class="btn-secondary">👤 Add an observation</button>
+      </div>
+      <div id="cur-patterns"></div>
+      <div class="cur-filters" id="cur-filters"></div>
+      <div id="cur-list"></div>
     </section>
 
     <!-- ============ AI COACH ============ -->

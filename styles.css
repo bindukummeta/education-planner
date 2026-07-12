@@ -561,3 +561,32 @@ h2 { font-size: 18px; font-weight: 800; letter-spacing: -0.01em; margin: 0 0 14p
    textarea/select in the modal span the full width and inherit the theme. */
 .modal-body textarea, .modal-body select, .modal-body input { width: 100%; box-sizing: border-box; }
 .modal-body textarea { resize: vertical; font: inherit; }
+
+/* ---- Curiosity ---- */
+.cur-patterns { background: linear-gradient(135deg, color-mix(in srgb, var(--accent-2) 16%, var(--card)) 0%, var(--card) 100%); }
+.cur-patterns ul { margin: 6px 0 0; padding-left: 20px; }
+.cur-patterns li { margin: 4px 0; font-size: 14px; line-height: 1.45; }
+.cur-parent-note { margin: 10px 0 0; padding: 8px 12px; font-size: 13px; color: var(--muted); background: var(--card-2); border-radius: var(--r-sm); }
+.cur-filters { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 14px; }
+.cur-filter { cursor: pointer; }
+.cur-card .cur-head { display: flex; gap: 8px; align-items: baseline; }
+.cur-kind-ico { font-size: 20px; line-height: 1; flex: 0 0 auto; }
+.cur-text { font-weight: 700; font-size: 15px; letter-spacing: -0.01em; }
+.cur-card .pc-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.cur-author-child { background: color-mix(in srgb, var(--accent-2) 20%, var(--card)); color: var(--text); border-color: transparent; }
+.cur-author-parent { background: color-mix(in srgb, #6c8cff 20%, var(--card)); color: var(--text); border-color: transparent; }
+.cur-status-open { background: var(--card-2); color: var(--muted); border-color: var(--border); }
+.cur-status-exploring { background: var(--rag-amber); color: var(--accent-ink); border-color: transparent; }
+.cur-status-answered { background: var(--rag-green); color: #fff; border-color: transparent; }
+.cur-link { background: color-mix(in srgb, #6c8cff 14%, var(--card)); border-color: transparent; }
+.cur-link-missing { background: var(--card-2); color: var(--muted); border-color: var(--border); text-decoration: line-through; }
+.cur-kind-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.cur-kind-btn { padding: 8px 14px; border-radius: var(--r-pill); border: 1px solid var(--border); background: var(--card); font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; }
+.cur-kind-btn.active { background: linear-gradient(135deg, var(--accent) 0%, var(--accent-strong) 100%); color: var(--accent-ink); border-color: transparent; }
+.cur-link-item { display: inline-flex; align-items: center; gap: 2px; }
+.cur-link-detach { border: none; background: none; color: var(--muted); cursor: pointer; font-size: 14px; padding: 0 4px; }
+.cur-link-detach:hover { color: var(--rag-red); }
+.cur-thoughts { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+.cur-thought { padding: 10px 12px; background: var(--card-2); border-radius: var(--r-sm); }
+.cur-thought-when { color: var(--muted); font-size: 12px; margin-left: 8px; }
+.cur-thought-text { margin-top: 6px; font-size: 14px; line-height: 1.45; }

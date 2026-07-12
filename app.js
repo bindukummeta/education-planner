@@ -80,7 +80,7 @@
   // ---- view switching ----
   const VIEW_KEYS = [
     "dashboard", "schools", "log", "homework", "reading",
-    "mocks", "playcreate", "progress", "coach", "calendar", "settings",
+    "mocks", "playcreate", "curiosity", "progress", "coach", "calendar", "settings",
   ];
   const VIEW_RENDER = {
     dashboard: () => renderDashboard(),
@@ -89,6 +89,7 @@
     reading: () => renderReading(),
     mocks: () => renderMocks(),
     playcreate: () => renderPlayCreate(),
+    curiosity: () => renderCuriosity(),
     progress: () => renderProgress(),
     coach: () => prepareCoach(),
     calendar: () => renderCalendar(),
@@ -1362,6 +1363,409 @@
   }
   // ========== END PLAY & CREATE ==========
 
+  // ============ CURIOSITY ============
+  // Self-contained block. Reaches out only to shared helpers ($, esc, openModal/
+  // closeModal, SUBJECTS, SUBJECT_LABEL, EduStore) and exposes one entry point
+  // wired in VIEW_RENDER: renderCuriosity(). Extract-later contract, mirrors P&C.
+  const CUR_KINDS = [
+    { key: "question",    label: "Question",    icon: "❓", prompt: "What are you wondering?" },
+    { key: "observation", label: "Observation", icon: "🔎", prompt: "What did you notice?" },
+    { key: "opinion",     label: "Opinion",     icon: "💭", prompt: "What do you think?" },
+  ];
+  const CUR_KIND_MAP = Object.fromEntries(CUR_KINDS.map((k) => [k.key, k]));
+  // Broad topic taxonomy — NOT the 11+ subjects. Extensible.
+  const CUR_TOPICS = [
+    { key: "science",      label: "Science",       icon: "🔬" },
+    { key: "nature",       label: "Nature",        icon: "🌿" },
+    { key: "history",      label: "History",       icon: "🏛️" },
+    { key: "geography",    label: "Geography",     icon: "🗺️" },
+    { key: "technology",   label: "Technology",    icon: "💻" },
+    { key: "books",        label: "Books",         icon: "📚" },
+    { key: "society",      label: "Society",       icon: "🤝" },
+    { key: "art",          label: "Art",           icon: "🎨" },
+    { key: "religion",     label: "Religion",      icon: "🕊️" },
+    { key: "space",        label: "Space",         icon: "🪐" },
+    { key: "health",       label: "Health",        icon: "💪" },
+    { key: "everydayLife", label: "Everyday life", icon: "🏡" },
+  ];
+  const CUR_TOPIC_MAP = Object.fromEntries(CUR_TOPICS.map((t) => [t.key, t]));
+  const CUR_STATUS = { open: "🌱 Open", exploring: "🔭 Exploring", answered: "✅ Answered" };
+  const CUR_STATUS_ORDER = ["open", "exploring", "answered"];
+  const CUR_STATUS_CLS = { open: "cur-status-open", exploring: "cur-status-exploring", answered: "cur-status-answered" };
+  const CUR_AUTHORS = { child: "🧒 L", parent: "👤 Parent" };
+  let curFilter = {};   // { kind?, status?, topic?, subject?, author? } — session filter state
+
+  function curAuthorChip(author) {
+    const a = author === "parent" ? "parent" : "child";
+    return '<span class="chip cur-author-' + a + '">' + CUR_AUTHORS[a] + "</span>";
+  }
+
+  async function renderCuriosity() {
+    const addBtn = $("cur-add");
+    if (addBtn && !addBtn.__wired) { addBtn.__wired = true; addBtn.addEventListener("click", () => openQuickCapture("child")); }
+    const pBtn = $("cur-add-parent");
+    if (pBtn && !pBtn.__wired) { pBtn.__wired = true; pBtn.addEventListener("click", () => openQuickCapture("parent")); }
+    await renderCuriosityPatterns();
+    renderCuriosityFilters();
+    await renderCuriosityList();
+  }
+
+  // Lightweight capture: ONE textarea + a tiny kind picker. Nothing else — topic,
+  // subject, tags, links, status all get enriched later on the detail screen, so
+  // spontaneous capture is never blocked by a long form. Author is fixed by the
+  // button that opened this (💡 = child, 👤 = parent) and shown, not editable here.
+  function openQuickCapture(author) {
+    const who = author === "parent" ? "parent" : "child";
+    const kindBtns = CUR_KINDS.map((k, i) =>
+      '<button type="button" class="cur-kind-btn' + (i === 0 ? " active" : "") + '" data-kind="' + k.key + '">' +
+      k.icon + " " + esc(k.label) + "</button>").join("");
+    const html =
+      '<form id="cur-form">' +
+      '<p class="hint">' + curAuthorChip(who) + " capturing a spark</p>" +
+      '<div class="cur-kind-row" id="c-kind">' + kindBtns + "</div>" +
+      '<div class="field"><label for="c-text">' + CUR_KIND_MAP.question.prompt + "</label>" +
+      '<textarea id="c-text" rows="3" placeholder="' + esc(CUR_KIND_MAP.question.prompt) + '"></textarea></div>' +
+      '<div class="form-actions"><button type="submit" class="btn-primary">Save spark 💡</button></div>' +
+      "</form>";
+    openModal(who === "parent" ? "Add an observation" : "I wonder…", html);
+    let kind = "question";
+    $("c-kind").querySelectorAll(".cur-kind-btn").forEach((b) =>
+      b.addEventListener("click", () => {
+        kind = b.dataset.kind;
+        $("c-kind").querySelectorAll(".cur-kind-btn").forEach((x) => x.classList.toggle("active", x === b));
+        const prompt = (CUR_KIND_MAP[kind] || CUR_KIND_MAP.question).prompt;
+        $("c-text").setAttribute("placeholder", prompt);
+      }));
+    $("cur-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const text = $("c-text").value.trim();
+      if (!text) return;
+      await EduStore.addCuriosity({
+        author: who, kind: kind, text: text,
+        topic: "", subject: "", tags: [],
+        thoughts: [], links: [], status: "open",
+      });
+      closeModal();
+      renderCuriosity();
+    });
+  }
+
+  // Session filter chips (kind / status / topic / author). Reuses .chip + active.
+  function renderCuriosityFilters() {
+    const wrap = $("cur-filters");
+    if (!wrap) return;
+    const chip = (dim, val, label) => {
+      const active = curFilter[dim] === val;
+      const b = document.createElement("button");
+      b.className = "chip cur-filter" + (active ? " active" : "");
+      b.textContent = label;
+      b.addEventListener("click", () => {
+        if (curFilter[dim] === val) delete curFilter[dim];
+        else curFilter[dim] = val;
+        renderCuriosity();
+      });
+      return b;
+    };
+    wrap.innerHTML = "";
+    CUR_KINDS.forEach((k) => wrap.appendChild(chip("kind", k.key, k.icon + " " + k.label)));
+    CUR_STATUS_ORDER.forEach((s) => wrap.appendChild(chip("status", s, CUR_STATUS[s])));
+    wrap.appendChild(chip("author", "child", CUR_AUTHORS.child));
+    wrap.appendChild(chip("author", "parent", CUR_AUTHORS.parent));
+  }
+
+  // ---- resilient links (decision #4) ----
+  // Gather every attachable record with its CURRENT label.
+  async function curiosityLinkCandidates() {
+    const out = [];
+    (await EduStore.getProjects()).forEach((p) => out.push({ type: "project", id: p.id, label: p.name }));
+    (await EduStore.getReading()).forEach((r) => out.push({ type: "reading", id: r.id, label: r.title }));
+    (await EduStore.getMocks()).forEach((m) => out.push({ type: "mock", id: m.id,
+      label: (SUBJECT_LABEL[m.subject] || m.subject) + " mock · " + m.date }));
+    (await EduStore.getEntries()).forEach((e) => out.push({ type: "entry", id: e.id,
+      label: (SUBJECT_LABEL[e.subject] || e.subject) + " · " + e.date }));
+    return out;
+  }
+  function curiosityCandidateIndex(candidates) {
+    const map = {};
+    (candidates || []).forEach((c) => { map[c.type + ":" + c.id] = c; });
+    return map;
+  }
+  // Given a stored link + a live index, decide how to render it. Never throws.
+  function resolveCuriosityLink(link, byId) {
+    try {
+      const live = byId[link.type + ":" + link.id];
+      if (!live) return { label: link.label || "(unknown)", missing: true, stale: false };
+      return { label: live.label, missing: false, stale: live.label !== link.label };
+    } catch (_) {
+      return { label: (link && link.label) || "(unknown)", missing: true, stale: false };
+    }
+  }
+  function curiosityLinkChipHTML(resolved) {
+    if (resolved.missing) {
+      return '<span class="chip cur-link-missing">🔗 ' + esc(resolved.label) + " (removed)</span>";
+    }
+    return '<span class="chip cur-link">🔗 ' + esc(resolved.label) + "</span>";
+  }
+
+  async function renderCuriosityList() {
+    const list = $("cur-list");
+    if (!list) return;
+    const rows = await EduStore.getCuriosity(curFilter);
+    if (!rows.length) {
+      list.innerHTML = '<p class="empty">No sparks yet — tap “💡 I wonder…” and capture your first one! ✨</p>';
+      return;
+    }
+    const byId = curiosityCandidateIndex(await curiosityLinkCandidates());
+    list.innerHTML = "";
+    rows.forEach((r) => {
+      const kind = CUR_KIND_MAP[r.kind] || CUR_KIND_MAP.question;
+      const chips = [];
+      chips.push(curAuthorChip(r.author));
+      chips.push('<span class="chip ' + (CUR_STATUS_CLS[r.status] || "cur-status-open") + '">' +
+        (CUR_STATUS[r.status] || CUR_STATUS.open) + "</span>");
+      if (r.topic && CUR_TOPIC_MAP[r.topic]) {
+        chips.push('<span class="chip">' + CUR_TOPIC_MAP[r.topic].icon + " " + esc(CUR_TOPIC_MAP[r.topic].label) + "</span>");
+      }
+      if (r.subject && SUBJECT_LABEL[r.subject]) {
+        chips.push('<span class="chip">' + esc(SUBJECT_LABEL[r.subject]) + "</span>");
+      }
+      (r.tags || []).forEach((t) => chips.push('<span class="chip">' + esc(t) + "</span>"));
+      const linkCount = (r.links || []).length;
+      if (linkCount) chips.push('<span class="chip cur-link">🔗 ' + linkCount + "</span>");
+      const thoughtCount = (r.thoughts || []).length;
+      if (thoughtCount) chips.push('<span class="chip">💬 ' + thoughtCount + "</span>");
+      const row = document.createElement("div");
+      row.className = "pc-card cur-card";
+      row.innerHTML =
+        '<div class="cur-head"><span class="cur-kind-ico">' + kind.icon + "</span>" +
+        '<span class="cur-text">' + esc(r.text) + "</span></div>" +
+        '<div class="pc-tags">' + chips.join("") + "</div>";
+      const actions = document.createElement("div");
+      actions.className = "form-actions";
+      const open = document.createElement("button");
+      open.className = "btn-secondary";
+      open.textContent = "Open";
+      open.addEventListener("click", () => openCuriosityDetail(r));
+      const del = document.createElement("button");
+      del.className = "entry-del";
+      del.setAttribute("aria-label", "Delete");
+      del.textContent = "🗑";
+      del.addEventListener("click", async () => {
+        if (!confirm("Delete this spark?")) return;
+        await EduStore.deleteCuriosity(r.id);
+        renderCuriosity();
+      });
+      actions.appendChild(open);
+      actions.appendChild(del);
+      row.appendChild(actions);
+      list.appendChild(row);
+    });
+    void byId; // byId is used by the detail modal; kept here for future inline chips
+  }
+
+  // Detail = enrichment + evolution. Set topic/subject/tags, cycle status, attach
+  // links (resilient), and APPEND to the thoughts thread (existing thoughts are
+  // read-only, so earlier thinking is never overwritten — decision #3).
+  async function openCuriosityDetail(r) {
+    const candidates = await curiosityLinkCandidates();
+    const byId = curiosityCandidateIndex(candidates);
+    const topicOpts = ['<option value="">— Topic —</option>'].concat(
+      CUR_TOPICS.map((t) => '<option value="' + t.key + '"' + (r.topic === t.key ? " selected" : "") + ">" +
+        t.icon + " " + esc(t.label) + "</option>")).join("");
+    const subjOpts = ['<option value="">— 11+ subject (optional) —</option>'].concat(
+      SUBJECTS.map((s) => '<option value="' + s + '"' + (r.subject === s ? " selected" : "") + ">" +
+        esc(SUBJECT_LABEL[s]) + "</option>")).join("");
+    const linkOpts = ['<option value="">— Link to your work —</option>'].concat(
+      candidates.map((c) => '<option value="' + c.type + ":" + c.id + '">' + esc(c.label) + "</option>")).join("");
+    // Existing links, live-resolved (renamed/deleted handled gracefully).
+    const linksHTML = (r.links || []).length
+      ? (r.links || []).map((lk, i) => {
+          const res = resolveCuriosityLink(lk, byId);
+          return '<span class="cur-link-item">' + curiosityLinkChipHTML(res) +
+            '<button type="button" class="cur-link-detach" data-idx="' + i + '" aria-label="Detach">✕</button></span>';
+        }).join("")
+      : '<span class="hint">No links yet.</span>';
+    // Thoughts thread, newest first, each read-only with author + timestamp.
+    const thoughts = (r.thoughts || []).slice().sort((a, b) => (b.at || 0) - (a.at || 0));
+    const thoughtsHTML = thoughts.length
+      ? '<div class="cur-thoughts">' + thoughts.map((t) =>
+          '<div class="cur-thought">' + curAuthorChip(t.author) +
+          '<span class="cur-thought-when">' + new Date(t.at || Date.now()).toISOString().slice(0, 10) + "</span>" +
+          '<div class="cur-thought-text">' + esc(t.text) + "</div></div>").join("") + "</div>"
+      : '<p class="hint">No thoughts yet — add the first one below.</p>';
+    const html =
+      '<div class="pc-meta">' + curAuthorChip(r.author) + " · " + (CUR_KIND_MAP[r.kind] || CUR_KIND_MAP.question).label + "</div>" +
+      '<div class="field"><label for="c-topic">Topic</label><select id="c-topic">' + topicOpts + "</select></div>" +
+      '<div class="field"><label for="c-subject">Link to a school subject (optional)</label><select id="c-subject">' + subjOpts + "</select></div>" +
+      '<div class="field"><label for="c-tags">Tags (comma separated)</label>' +
+      '<input id="c-tags" value="' + esc((r.tags || []).join(", ")) + '" placeholder="e.g. space, rockets" /></div>' +
+      '<div class="field"><label>Status</label><div class="form-actions">' +
+      '<button type="button" id="c-status" class="btn-secondary">' + (CUR_STATUS[r.status] || CUR_STATUS.open) + "</button></div></div>" +
+      '<div class="field"><label>Links to your work</label><div class="pc-tags" id="c-links">' + linksHTML + "</div>" +
+      '<select id="c-link">' + linkOpts + "</select>" +
+      '<div class="form-actions"><button type="button" id="c-link-add" class="btn-secondary">🔗 Attach</button></div></div>' +
+      '<div class="field"><label>Thoughts so far</label>' + thoughtsHTML + "</div>" +
+      '<div class="field"><label for="c-thought">Add a new thought</label>' +
+      '<textarea id="c-thought" rows="2" placeholder="What are you thinking now?"></textarea>' +
+      '<div class="form-actions"><button type="button" id="c-thought-add" class="btn-secondary">💬 Add thought</button></div></div>' +
+      '<div class="form-actions"><button type="button" id="c-save" class="btn-primary">Save</button></div>';
+    openModal(r.text, html);
+
+    // Local working copies so multiple edits batch into one save.
+    let status = r.status || "open";
+    let links = (r.links || []).slice();
+    const rerenderLinks = () => {
+      const box = $("c-links");
+      if (!links.length) { box.innerHTML = '<span class="hint">No links yet.</span>'; return; }
+      box.innerHTML = links.map((lk, i) => {
+        const res = resolveCuriosityLink(lk, byId);
+        return '<span class="cur-link-item">' + curiosityLinkChipHTML(res) +
+          '<button type="button" class="cur-link-detach" data-idx="' + i + '" aria-label="Detach">✕</button></span>';
+      }).join("");
+      box.querySelectorAll(".cur-link-detach").forEach((b) =>
+        b.addEventListener("click", () => { links.splice(Number(b.dataset.idx), 1); rerenderLinks(); }));
+    };
+    $("c-links").querySelectorAll(".cur-link-detach").forEach((b) =>
+      b.addEventListener("click", () => { links.splice(Number(b.dataset.idx), 1); rerenderLinks(); }));
+    $("c-status").addEventListener("click", () => {
+      const next = CUR_STATUS_ORDER[(CUR_STATUS_ORDER.indexOf(status) + 1) % CUR_STATUS_ORDER.length];
+      status = next;
+      $("c-status").textContent = CUR_STATUS[status];
+    });
+    $("c-link-add").addEventListener("click", () => {
+      const val = $("c-link").value;
+      if (!val) return;
+      const live = byId[val];
+      if (!live) return;
+      if (links.some((l) => l.type === live.type && l.id === live.id)) return;
+      links.push({ type: live.type, id: live.id, label: live.label });
+      rerenderLinks();
+    });
+    $("c-thought-add").addEventListener("click", async () => {
+      const text = $("c-thought").value.trim();
+      if (!text) return;
+      const thoughtsNext = (r.thoughts || []).concat([{ text: text, author: r.author || "child", at: Date.now() }]);
+      const updated = await EduStore.updateCuriosity(r.id, { thoughts: thoughtsNext });
+      closeModal();
+      if (updated) openCuriosityDetail(updated);
+      else renderCuriosity();
+    });
+    $("c-save").addEventListener("click", async () => {
+      const tags = $("c-tags").value.split(",").map((s) => s.trim()).filter(Boolean);
+      // Refresh snapshot labels on save so renamed links persist their new label.
+      const linksToSave = links.map((lk) => {
+        const res = resolveCuriosityLink(lk, byId);
+        return res.missing ? lk : { type: lk.type, id: lk.id, label: res.label };
+      });
+      await EduStore.updateCuriosity(r.id, {
+        topic: $("c-topic").value, subject: $("c-subject").value,
+        tags: tags, status: status, links: linksToSave,
+      });
+      closeModal();
+      renderCuriosity();
+    });
+  }
+
+  // ---- local patterns (offline, evidence-only — decision #5) ----
+  // Every string is count/time-bounded. NO identity/destiny/career/ability claims.
+  // Values are interpolated into fixed templates; nothing free-form is emitted.
+  const CUR_INSIGHT_PHRASES = {
+    total: "You've captured {n} sparks so far 💡",
+    recent: "{n} of them in the last 7 days ✨",
+    streak: "You've wondered something {n} days in a row 🔥",
+    topics: "You've explored {list} most this month 🌟",
+    kind: "Lately you've been {activity} 🙂",
+    subjectLinks: "{n} sparks are linked to your {subject} work 📎",
+    open: "{n} questions are waiting for you to explore 🔭",
+    parent: "A parent has added {n} observations 👤",
+    empty: "Nothing here yet — your wonders and discoveries will show up here as you capture them. 🌱",
+  };
+  const CUR_KIND_ACTIVITY = {
+    question: "asking lots of questions ❓",
+    observation: "noticing lots of things 🔎",
+    opinion: "sharing lots of ideas 💭",
+  };
+
+  function curDayKey(ts) { return new Date(ts).toISOString().slice(0, 10); }
+  function curStreak(childRows) {
+    const days = new Set(childRows.map((r) => curDayKey(r.createdAt || r.updatedAt || Date.now())));
+    let streak = 0;
+    const d = new Date();
+    for (;;) {
+      const key = d.toISOString().slice(0, 10);
+      if (days.has(key)) { streak++; d.setDate(d.getDate() - 1); } else break;
+    }
+    return streak;
+  }
+
+  async function renderCuriosityPatterns() {
+    const el = $("cur-patterns");
+    if (!el) return;
+    const rows = await EduStore.getCuriosity();  // active student
+    if (!rows.length) {
+      el.innerHTML = '<div class="card cur-patterns"><p class="hint">' + CUR_INSIGHT_PHRASES.empty + "</p></div>";
+      return;
+    }
+    // Parent observations are counted separately and NEVER merged into L's numbers.
+    const childRows = rows.filter((r) => (r.author || "child") === "child");
+    const parentRows = rows.filter((r) => r.author === "parent");
+    const now = Date.now();
+    const weekAgo = now - 7 * 864e5;
+    const monthAgo = now - 30 * 864e5;
+    const lines = [];
+
+    lines.push(CUR_INSIGHT_PHRASES.total.replace("{n}", childRows.length));
+    const recent = childRows.filter((r) => (r.createdAt || r.updatedAt || 0) >= weekAgo).length;
+    if (recent) lines.push(CUR_INSIGHT_PHRASES.recent.replace("{n}", recent));
+    const streak = curStreak(childRows);
+    if (streak >= 2) lines.push(CUR_INSIGHT_PHRASES.streak.replace("{n}", streak));
+
+    // Top topics this month (topic, falling back to tags). Count/time-bounded.
+    const topicCounts = {};
+    childRows.filter((r) => (r.createdAt || r.updatedAt || 0) >= monthAgo).forEach((r) => {
+      if (r.topic && CUR_TOPIC_MAP[r.topic]) {
+        topicCounts[CUR_TOPIC_MAP[r.topic].label] = (topicCounts[CUR_TOPIC_MAP[r.topic].label] || 0) + 1;
+      } else {
+        (r.tags || []).forEach((t) => { const k = String(t).trim(); if (k) topicCounts[k] = (topicCounts[k] || 0) + 1; });
+      }
+    });
+    const topTopics = Object.keys(topicCounts).sort((a, b) => topicCounts[b] - topicCounts[a]).slice(0, 3);
+    if (topTopics.length) {
+      const listStr = topTopics.map((t) => "<strong>" + esc(t) + "</strong>").join(", ");
+      lines.push(CUR_INSIGHT_PHRASES.topics.replace("{list}", listStr));
+    }
+
+    // Favourite kind, phrased as an activity (not a trait).
+    const kindCounts = {};
+    childRows.forEach((r) => { kindCounts[r.kind] = (kindCounts[r.kind] || 0) + 1; });
+    const topKind = Object.keys(kindCounts).sort((a, b) => kindCounts[b] - kindCounts[a])[0];
+    if (topKind && CUR_KIND_ACTIVITY[topKind]) {
+      lines.push(CUR_INSIGHT_PHRASES.kind.replace("{activity}", CUR_KIND_ACTIVITY[topKind]));
+    }
+
+    // Subject-link spread (evidence, not "most curious about X").
+    const subjCounts = {};
+    childRows.forEach((r) => { if (r.subject && SUBJECT_LABEL[r.subject]) subjCounts[r.subject] = (subjCounts[r.subject] || 0) + 1; });
+    const topSubj = Object.keys(subjCounts).sort((a, b) => subjCounts[b] - subjCounts[a])[0];
+    if (topSubj) {
+      lines.push(CUR_INSIGHT_PHRASES.subjectLinks
+        .replace("{n}", subjCounts[topSubj]).replace("{subject}", SUBJECT_LABEL[topSubj]));
+    }
+
+    const openCount = childRows.filter((r) => (r.status || "open") === "open").length;
+    if (openCount) lines.push(CUR_INSIGHT_PHRASES.open.replace("{n}", openCount));
+
+    let parentLine = "";
+    if (parentRows.length) {
+      parentLine = '<p class="cur-parent-note">' +
+        CUR_INSIGHT_PHRASES.parent.replace("{n}", parentRows.length) + "</p>";
+    }
+
+    el.innerHTML = '<div class="card cur-patterns"><h2 class="section-heading">Your sparks 🌟</h2>' +
+      "<ul>" + lines.map((l) => "<li>" + l + "</li>").join("") + "</ul>" + parentLine + "</div>";
+  }
+  // ========== END CURIOSITY ==========
+
   // ============ SETTINGS ============
   function renderSettings() {
     const el = $("app-version");
@@ -1385,7 +1789,12 @@
     document.querySelectorAll(".nav-item").forEach((t) =>
       t.addEventListener("click", () => showView(t.dataset.view)));
     document.querySelectorAll("[data-goto]").forEach((b) =>
-      b.addEventListener("click", () => showView(b.dataset.goto)));
+      b.addEventListener("click", () => {
+        showView(b.dataset.goto);
+        // Optional one-tap hook: after switching view, click an in-view button
+        // (e.g. open the lightweight capture modal straight from the dashboard).
+        if (b.dataset.gotoThen) { const t = $(b.dataset.gotoThen); if (t) t.click(); }
+      }));
     $("menu-btn").addEventListener("click", toggleDrawer);
     $("drawer-backdrop").addEventListener("click", closeDrawer);
     $("modal-close").addEventListener("click", closeModal);
