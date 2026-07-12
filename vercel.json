@@ -1,6 +1,11 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "cleanUrls": true,
+  "functions": {
+    "api/coach.js": {
+      "maxDuration": 10
+    }
+  },
   "headers": [
     {
       "source": "/service-worker.js",

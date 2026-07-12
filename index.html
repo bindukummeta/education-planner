@@ -14,33 +14,55 @@
 </head>
 <body>
   <header class="app-header">
-    <h1>🎓 Education Planner</h1>
-    <p class="subtitle">Grammar-school prep &amp; daily progress</p>
+    <button id="menu-btn" class="menu-btn" aria-label="Open menu" aria-controls="drawer" aria-expanded="false">☰</button>
+    <div class="app-header-titles">
+      <h1>🎓 Education Planner</h1>
+      <p class="subtitle">Grammar-school prep &amp; daily progress</p>
+    </div>
   </header>
 
-  <nav class="tabs" id="tabs">
-    <button class="tab active" data-view="schools">Schools</button>
-    <button class="tab" data-view="log">Daily Log</button>
-    <button class="tab" data-view="progress">Progress</button>
+  <div id="drawer-backdrop" class="drawer-backdrop hidden"></div>
+  <nav id="drawer" class="drawer" aria-hidden="true" aria-label="Sections">
+    <ul class="nav-list">
+      <li><button class="nav-item" data-view="dashboard"><span class="nav-ico">🏠</span><span class="nav-label">Dashboard</span></button></li>
+      <li><button class="nav-item" data-view="schools"><span class="nav-ico">🏫</span><span class="nav-label">Schools</span></button></li>
+      <li><button class="nav-item" data-view="log"><span class="nav-ico">📓</span><span class="nav-label">Daily Log</span></button></li>
+      <li><button class="nav-item" data-view="homework"><span class="nav-ico">📖</span><span class="nav-label">Homework</span></button></li>
+      <li><button class="nav-item" data-view="reading"><span class="nav-ico">📚</span><span class="nav-label">Reading</span></button></li>
+      <li><button class="nav-item" data-view="mocks"><span class="nav-ico">📝</span><span class="nav-label">Mock Papers</span></button></li>
+      <li><button class="nav-item" data-view="progress"><span class="nav-ico">📈</span><span class="nav-label">Progress</span></button></li>
+      <li><button class="nav-item" data-view="coach"><span class="nav-ico">🎯</span><span class="nav-label">AI Coach</span></button></li>
+      <li><button class="nav-item" data-view="calendar"><span class="nav-ico">📅</span><span class="nav-label">Calendar</span></button></li>
+      <li><button class="nav-item" data-view="settings"><span class="nav-ico">⚙️</span><span class="nav-label">Settings</span></button></li>
+    </ul>
   </nav>
 
   <main>
-    <!-- ============ SCHOOLS ============ -->
-    <section id="view-schools" class="view">
-      <div class="card settings-card">
-        <div class="field">
-          <label for="f-home-postcode">Home postcode</label>
-          <div class="postcode-row">
-            <input id="f-home-postcode" placeholder="e.g. SW1A 1AA" autocomplete="postal-code" />
-            <button type="button" id="save-home-postcode" class="btn-secondary">Save</button>
-          </div>
-          <p class="hint" id="postcode-hint">Set once — used to show straight-line distance to each school.</p>
-        </div>
-        <div class="reseed-row">
-          <button type="button" id="reset-seed" class="btn-secondary">Reset to preset schools</button>
-          <p class="hint" id="reseed-hint">Replaces the school list with the built-in presets (Tiffin, Nonsuch, Henrietta Barnett). Your daily log and photos are kept.</p>
-        </div>
+    <!-- ============ DASHBOARD ============ -->
+    <section id="view-dashboard" class="view hidden">
+      <div class="dash-tiles">
+        <div class="stat-tile" id="dash-countdown"></div>
+        <div class="stat-tile" id="dash-streak"></div>
       </div>
+      <div class="card">
+        <h2>Readiness snapshot</h2>
+        <div id="dash-rag"></div>
+      </div>
+      <div class="card">
+        <h2>Due today</h2>
+        <div id="dash-homework"></div>
+      </div>
+      <div class="card">
+        <h2>Recent activity</h2>
+        <div id="dash-recent"></div>
+      </div>
+      <div class="view-actions">
+        <button type="button" class="btn-primary" data-goto="log">＋ Log work</button>
+      </div>
+    </section>
+
+    <!-- ============ SCHOOLS ============ -->
+    <section id="view-schools" class="view hidden">
       <div class="view-actions">
         <button id="add-school" class="btn-primary">+ Add school</button>
       </div>
@@ -181,6 +203,164 @@
         <div id="readiness-list"></div>
       </div>
     </section>
+
+    <!-- ============ HOMEWORK ============ -->
+    <section id="view-homework" class="view hidden">
+      <div class="card">
+        <h2>Add homework</h2>
+        <form id="homework-form">
+          <div class="field"><label for="h-title">Title *</label><input id="h-title" required placeholder="e.g. VR worksheet p.12" /></div>
+          <div class="grid-2">
+            <div class="field">
+              <label for="h-subject">Subject</label>
+              <select id="h-subject">
+                <option value="">— none —</option>
+                <option value="vr">VR</option>
+                <option value="nvr">NVR</option>
+                <option value="maths">Maths</option>
+                <option value="english">English</option>
+                <option value="creativeWriting">Creative Writing</option>
+              </select>
+            </div>
+            <div class="field"><label for="h-due">Due date</label><input id="h-due" type="date" /></div>
+          </div>
+          <div class="field">
+            <label for="h-difficulty">Difficulty</label>
+            <select id="h-difficulty">
+              <option value="">— not set —</option>
+              <option value="easy">Easy</option>
+              <option value="medium">Medium</option>
+              <option value="hard">Hard</option>
+            </select>
+          </div>
+          <div class="field"><label for="h-notes">Notes (optional)</label><textarea id="h-notes" rows="2"></textarea></div>
+          <div class="form-actions"><button type="submit" class="btn-primary">Add homework</button></div>
+        </form>
+      </div>
+      <div id="homework-list"></div>
+    </section>
+
+    <!-- ============ READING ============ -->
+    <section id="view-reading" class="view hidden">
+      <div class="card">
+        <h2>Log reading</h2>
+        <form id="reading-form">
+          <div class="field"><label for="r-title">Book / title *</label><input id="r-title" required placeholder="e.g. Wonder" /></div>
+          <div class="grid-2">
+            <div class="field"><label for="r-author">Author</label><input id="r-author" placeholder="e.g. R.J. Palacio" /></div>
+            <div class="field"><label for="r-date">Date</label><input id="r-date" type="date" /></div>
+          </div>
+          <div class="grid-2">
+            <div class="field"><label for="r-minutes">Minutes</label><input id="r-minutes" type="number" min="0" step="1" placeholder="e.g. 20" /></div>
+            <div class="field"><label for="r-pages">Pages</label><input id="r-pages" type="number" min="0" step="1" placeholder="e.g. 15" /></div>
+          </div>
+          <div class="field"><label for="r-note">Note (optional)</label><textarea id="r-note" rows="2"></textarea></div>
+          <div class="form-actions"><button type="submit" class="btn-primary">Add reading</button></div>
+        </form>
+      </div>
+      <div class="card" id="reading-totals"></div>
+      <h2 class="section-heading">Recent reading</h2>
+      <div id="reading-list"></div>
+    </section>
+
+    <!-- ============ MOCK PAPERS ============ -->
+    <section id="view-mocks" class="view hidden">
+      <div class="card">
+        <h2>Log a mock paper</h2>
+        <form id="mock-form">
+          <div class="grid-2">
+            <div class="field">
+              <label for="m-subject">Subject</label>
+              <select id="m-subject">
+                <option value="vr">VR</option>
+                <option value="nvr">NVR</option>
+                <option value="maths">Maths</option>
+                <option value="english">English</option>
+                <option value="creativeWriting">Creative Writing</option>
+              </select>
+            </div>
+            <div class="field"><label for="m-date">Date</label><input id="m-date" type="date" /></div>
+          </div>
+          <div class="grid-2">
+            <div class="field"><label for="m-paper">Paper name</label><input id="m-paper" placeholder="e.g. GL Pack 3" /></div>
+            <div class="field"><label for="m-source">Source</label><input id="m-source" placeholder="e.g. Bond, CGP" /></div>
+          </div>
+          <div class="grid-2">
+            <div class="field"><label for="m-raw">Score</label><input id="m-raw" type="number" min="0" step="1" placeholder="e.g. 42" /></div>
+            <div class="field"><label for="m-max">Out of</label><input id="m-max" type="number" min="1" step="1" placeholder="e.g. 50" /></div>
+          </div>
+          <div class="grid-2">
+            <div class="field"><label for="m-minutes">Minutes taken</label><input id="m-minutes" type="number" min="0" step="1" placeholder="e.g. 45" /></div>
+            <div class="field">
+              <label for="m-difficulty">Difficulty</label>
+              <select id="m-difficulty">
+                <option value="">— not set —</option>
+                <option value="easy">Easy</option>
+                <option value="medium">Medium</option>
+                <option value="hard">Hard</option>
+              </select>
+            </div>
+          </div>
+          <p class="pct-preview">Percentage: <b id="mock-pct">—</b></p>
+          <div class="field"><label for="m-image">Photo (optional)</label><input id="m-image" type="file" accept="image/*" capture="environment" /></div>
+          <div class="field"><label for="m-note">Note (optional)</label><textarea id="m-note" rows="2"></textarea></div>
+          <div class="form-actions"><button type="submit" class="btn-primary">Save mock</button></div>
+        </form>
+      </div>
+      <h2 class="section-heading">Recent mocks</h2>
+      <div id="mock-list"></div>
+    </section>
+
+    <!-- ============ AI COACH ============ -->
+    <section id="view-coach" class="view hidden">
+      <div class="card coach-panel">
+        <h2>🎯 AI Coach</h2>
+        <p class="hint">Get study advice based on her recent progress. Needs an internet connection.</p>
+        <div class="form-actions"><button type="button" id="coach-run" class="btn-primary">Get advice</button></div>
+        <p id="coach-status" class="hint"></p>
+        <div id="coach-output"></div>
+      </div>
+    </section>
+
+    <!-- ============ CALENDAR ============ -->
+    <section id="view-calendar" class="view hidden">
+      <div class="card">
+        <div class="cal-header">
+          <button type="button" id="cal-prev" class="btn-secondary">‹</button>
+          <h2 id="cal-title"></h2>
+          <button type="button" id="cal-next" class="btn-secondary">›</button>
+        </div>
+        <div id="cal-grid" class="cal-grid"></div>
+      </div>
+      <div class="card" id="cal-day-detail"></div>
+    </section>
+
+    <!-- ============ SETTINGS ============ -->
+    <section id="view-settings" class="view hidden">
+      <div class="card settings-card">
+        <div class="field">
+          <label for="f-home-postcode">Home postcode</label>
+          <div class="postcode-row">
+            <input id="f-home-postcode" placeholder="e.g. SW1A 1AA" autocomplete="postal-code" />
+            <button type="button" id="save-home-postcode" class="btn-secondary">Save</button>
+          </div>
+          <p class="hint" id="postcode-hint">Set once — used to show straight-line distance to each school.</p>
+        </div>
+        <div class="reseed-row">
+          <button type="button" id="reset-seed" class="btn-secondary">Reset to preset schools</button>
+          <p class="hint" id="reseed-hint">Replaces the school list with the built-in presets (Tiffin, Nonsuch, Henrietta Barnett). Your daily log and photos are kept.</p>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Backup</h2>
+        <div class="backup-actions">
+          <button id="export-backup" class="btn-secondary">Export backup</button>
+          <label class="btn-secondary file-label">Import backup<input id="import-backup" type="file" accept="application/json" hidden /></label>
+        </div>
+        <span id="install-hint"></span>
+        <p id="app-version" class="hint"></p>
+      </div>
+    </section>
   </main>
 
   <div id="update-banner" class="update-banner hidden">
@@ -189,11 +369,6 @@
   </div>
 
   <footer class="app-footer">
-    <div class="backup-actions">
-      <button id="export-backup" class="btn-secondary">Export backup</button>
-      <label class="btn-secondary file-label">Import backup<input id="import-backup" type="file" accept="application/json" hidden /></label>
-    </div>
-    <span id="install-hint"></span>
     <p class="footer-source">Rankings sourced from <a href="https://www.thetimes.com/best-schools-league-table" target="_blank" rel="noopener noreferrer">The Times Best Schools League Table</a>.</p>
   </footer>
 

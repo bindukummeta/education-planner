@@ -1,0 +1,9 @@
+{
+  "name": "education-planner-app",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Offline-first 11+ preparation planner with an AI study coach.",
+  "engines": {
+    "node": ">=18"
+  }
+}
