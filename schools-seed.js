@@ -27,7 +27,7 @@
   // registration, etc.). On load, migrate() refreshes those fields on existing
   // preset records whose stored version is older — so improvements reach users
   // without a destructive reset and without touching their own edits.
-  const SEED_VERSION = 7;
+  const SEED_VERSION = 8;
 
   // Fields owned by the seed (authoritative, refreshed on a version bump).
   const SEED_OWNED = [
@@ -125,7 +125,7 @@
     {
       name: "Watford Grammar School for Girls",
       postcode: "WD18 0AE",
-      nationalRanking: "",
+      nationalRanking: "National 111 (SchoolGuide Top 200 State Secondary 2026 — NOT the Parent Power table used for the other schools; partially selective, so it doesn't appear in the Parent Power grammar list). ⚠ Different source; re-check yearly.",
       pan: "210",
       examBoard: "GL Assessment",
       registration: "2027 entry (SW Herts Consortium): register for the tests at swhertsschools.org.uk (window ~late Apr–mid Jun 2026); also apply via your home LA by 31 Oct 2026. Test ~5 Sep 2026; results ~Oct. ⚠ Re-check dates each year.",
@@ -143,7 +143,7 @@
     {
       name: "Beaconsfield High School",
       postcode: "HP9 1RR",
-      nationalRanking: "",
+      nationalRanking: "National 57 (The Sunday Times / The Times Parent Power Best Schools 2026; 56th among grammar schools). ⚠ Re-check yearly.",
       pan: "180",
       examBoard: "Other",
       registration: "2027 entry (Buckinghamshire): register for the Bucks Secondary Transfer Test with Buckinghamshire Council ~1 May–2 Jun 2026 (state-school pupils in Bucks are entered automatically). Test ~10 Sep 2026; name the school on your LA form by 31 Oct 2026. ⚠ Re-check dates each year.",
