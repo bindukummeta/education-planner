@@ -27,7 +27,7 @@
   // registration, etc.). On load, migrate() refreshes those fields on existing
   // preset records whose stored version is older — so improvements reach users
   // without a destructive reset and without touching their own edits.
-  const SEED_VERSION = 6;
+  const SEED_VERSION = 7;
 
   // Fields owned by the seed (authoritative, refreshed on a version bump).
   const SEED_OWNED = [
@@ -121,6 +121,42 @@
       openDay: "",
       website: "https://www.wallingtongirls.org.uk/",
       notes: "Part of the Girls' Learning Trust. Woodcote Road, Wallington, Surrey SM6 0PH. Tel 020 8394 3400 (admissions@girlslearningtrust.org).",
+    },
+    {
+      name: "Watford Grammar School for Girls",
+      postcode: "WD18 0AE",
+      nationalRanking: "",
+      pan: "210",
+      examBoard: "GL Assessment",
+      registration: "2027 entry (SW Herts Consortium): register for the tests at swhertsschools.org.uk (window ~late Apr–mid Jun 2026); also apply via your home LA by 31 Oct 2026. Test ~5 Sep 2026; results ~Oct. ⚠ Re-check dates each year.",
+      examDate: "",
+      resultsDate: "",
+      subjectsSummary: "SW Herts Consortium test (GL Assessment): Maths + Verbal Reasoning, ~50 min each. ⚠ Only 52 of 210 places (25%) are academic-selective — 137 are distance/community places (non-selective) + 21 music aptitude.",
+      testsSubjects: { vr: true, nvr: false, maths: true, english: false, creativeWriting: false },
+      catchment: "",
+      admissionNumbers: "",
+      historicCutoffs: [],
+      openDay: "",
+      website: "https://www.watfordgrammarschoolforgirls.org.uk/",
+      notes: "Partially selective academy for girls 11–18. Lady's Close, Watford WD18 0AE. Tel 01923 223403. ⚠ Academic places are restricted to the school's Admission Area (Watford-area postcodes); check whether your postcode qualifies before relying on this.",
+    },
+    {
+      name: "Beaconsfield High School",
+      postcode: "HP9 1RR",
+      nationalRanking: "",
+      pan: "180",
+      examBoard: "Other",
+      registration: "2027 entry (Buckinghamshire): register for the Bucks Secondary Transfer Test with Buckinghamshire Council ~1 May–2 Jun 2026 (state-school pupils in Bucks are entered automatically). Test ~10 Sep 2026; name the school on your LA form by 31 Oct 2026. ⚠ Re-check dates each year.",
+      examDate: "",
+      resultsDate: "",
+      subjectsSummary: "Buckinghamshire Secondary Transfer Test (STT), qualifying score 121. Two papers covering Verbal Reasoning, Non-Verbal Reasoning and Maths (GL-style, administered by Bucks Council). ⚠ Catchment-based: out-of-catchment qualified applicants are ranked lower.",
+      testsSubjects: { vr: true, nvr: true, maths: true, english: false, creativeWriting: false },
+      catchment: "",
+      admissionNumbers: "",
+      historicCutoffs: [],
+      openDay: "",
+      website: "https://www.beaconsfieldhigh.school/",
+      notes: "Buckinghamshire girls' grammar 11–18 (Ofsted Outstanding). Wattleton Road, Beaconsfield HP9 1RR. Tel 01494 673043. ⚠ Requires the separate Bucks 11+ (STT) and is catchment-based — a stretch from a TW13 base.",
     },
   ];
 
