@@ -3,8 +3,8 @@
 
   const $ = (id) => document.getElementById(id);
   const SETTINGS_KEY = "eduplanner.settings.v1";
-  const SUBJECTS = ["vr", "nvr", "maths", "english"];
-  const SUBJECT_LABEL = { vr: "VR", nvr: "NVR", maths: "Maths", english: "English" };
+  const SUBJECTS = ["vr", "nvr", "maths", "english", "creativeWriting"];
+  const SUBJECT_LABEL = { vr: "VR", nvr: "NVR", maths: "Maths", english: "English", creativeWriting: "Creative Writing" };
   const RECENT_N = 5;
 
   let activeSubject = "vr";

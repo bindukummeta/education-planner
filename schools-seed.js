@@ -27,7 +27,7 @@
   // registration, etc.). On load, migrate() refreshes those fields on existing
   // preset records whose stored version is older — so improvements reach users
   // without a destructive reset and without touching their own edits.
-  const SEED_VERSION = 5;
+  const SEED_VERSION = 6;
 
   // Fields owned by the seed (authoritative, refreshed on a version bump).
   const SEED_OWNED = [
@@ -107,7 +107,7 @@
     {
       name: "Wallington High School for Girls",
       postcode: "SM6 0PH",
-      nationalRanking: "",
+      nationalRanking: "National 24 (The Sunday Times / The Times Parent Power Best Schools 2026; 10th in London). ⚠ Re-check yearly.",
       pan: "210",
       examBoard: "Bespoke / consortium",
       registration: "2027 entry (Sutton SET consortium): registration opens Fri 1 May 2026, closes Fri 31 Jul 2026 (access-arrangements deadline Fri 12 Jun 2026). SET Tue 15 Sep 2026; Stage 2 (NWSSEE, with Nonsuch) Sat 26 Sep 2026. Also name Wallington on the LA Common Application Form by 31 Oct. ⚠ Re-check dates each year.",
