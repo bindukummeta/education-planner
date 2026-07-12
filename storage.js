@@ -7,7 +7,8 @@
   "use strict";
 
   const DB_NAME = "eduplanner";
-  const DB_VERSION = 2;
+  const DB_VERSION = 3;
+  const DEFAULT_STUDENT_ID = "student-1";
   const STORES = {
     schools: "schools",
     entries: "entries",
@@ -17,6 +18,8 @@
     reading: "reading",
     mocks: "mocks",
     events: "events",
+    students: "students",
+    projects: "projects",
   };
 
   let dbPromise = null;
@@ -74,6 +77,21 @@
           const s = db.createObjectStore(STORES.events, { keyPath: "id" });
           s.createIndex("date", "date", { unique: false });
           s.createIndex("type", "type", { unique: false });
+        }
+        if (!db.objectStoreNames.contains(STORES.students)) {
+          const s = db.createObjectStore(STORES.students, { keyPath: "id" });
+          s.createIndex("name", "name", { unique: false });
+          // Seed the first student (L) exactly once, on first creation of this store.
+          // The contains() guard guarantees this never re-runs, so an existing L
+          // profile is never overwritten. DEFAULT_STUDENT_ID keeps the id stable.
+          s.put({ id: DEFAULT_STUDENT_ID, name: "L", createdAt: Date.now(), order: 1 });
+        }
+        if (!db.objectStoreNames.contains(STORES.projects)) {
+          const s = db.createObjectStore(STORES.projects, { keyPath: "id" });
+          s.createIndex("status", "status", { unique: false });
+          s.createIndex("updatedAt", "updatedAt", { unique: false });
+          s.createIndex("category", "category", { unique: false });
+          s.createIndex("studentId", "studentId", { unique: false });
         }
       };
       req.onsuccess = () => resolve(req.result);
@@ -260,6 +278,65 @@
     return reqP(store.delete(id));
   }
 
+  // ---- students (multi-student foundation; L = student 1) ----
+  async function getStudents() {
+    const store = await tx(STORES.students, "readonly");
+    const rows = await reqP(store.getAll());
+    return rows.sort((a, b) => (a.order || 0) - (b.order || 0));
+  }
+  async function getActiveStudentId() {
+    // Persisted preference; falls back to the seeded default student.
+    const v = await getMeta("activeStudentId");
+    return v || DEFAULT_STUDENT_ID;
+  }
+  async function setActiveStudentId(id) { return setMeta("activeStudentId", id); }
+  async function addStudent(rec) {
+    const record = Object.assign({ id: uid(), createdAt: Date.now(), order: Date.now() }, rec);
+    const store = await tx(STORES.students, "readwrite");
+    await reqP(store.put(record));
+    return record;
+  }
+
+  // ---- projects (Play & Create) ----
+  async function getProjects(filter) {
+    filter = filter || {};
+    const store = await tx(STORES.projects, "readonly");
+    let rows = await reqP(store.getAll());
+    // Scope to the active student by default (records created before studentId
+    // existed have none, so treat a missing studentId as the default student).
+    const all = filter.studentId === "*ALL*";
+    if (!all) {
+      const sid = filter.studentId || (await getActiveStudentId());
+      rows = rows.filter((r) => (r.studentId || DEFAULT_STUDENT_ID) === sid);
+    }
+    if (filter.status) rows = rows.filter((r) => r.status === filter.status);
+    if (filter.category) rows = rows.filter((r) => r.category === filter.category);
+    return rows.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  }
+  async function addProject(rec) {
+    const now = Date.now();
+    const record = Object.assign(
+      { id: uid(), studentId: DEFAULT_STUDENT_ID, createdAt: now, updatedAt: now },
+      rec
+    );
+    const store = await tx(STORES.projects, "readwrite");
+    await reqP(store.put(record));
+    return record;
+  }
+  async function updateProject(id, patch) {
+    const store = await tx(STORES.projects, "readonly");
+    const cur = await reqP(store.get(id));
+    if (!cur) return null;
+    const record = Object.assign({}, cur, patch, { updatedAt: Date.now() });
+    const rw = await tx(STORES.projects, "readwrite");
+    await reqP(rw.put(record));
+    return record;
+  }
+  async function deleteProject(id) {
+    const store = await tx(STORES.projects, "readwrite");
+    return reqP(store.delete(id));
+  }
+
   // ---- blobs ----
   async function putBlob(blob, type) {
     const record = { id: uid(), blob: blob, type: type || "image/jpeg", createdAt: Date.now() };
@@ -313,13 +390,15 @@
     const reading = await getReading();
     const mocks = await getMocks();
     const events = await getEvents();
+    const students = await getStudents();
+    const projects = await getProjects({ studentId: "*ALL*" });
     const blobStore = await tx(STORES.blobs, "readonly");
     const rawBlobs = await reqP(blobStore.getAll());
     const blobs = [];
     for (const b of rawBlobs) {
       blobs.push({ id: b.id, type: b.type, createdAt: b.createdAt, dataURL: await blobToDataURL(b.blob) });
     }
-    return { version: 2, exportedAt: Date.now(), schools, entries, homework, reading, mocks, events, blobs };
+    return { version: 3, exportedAt: Date.now(), schools, entries, homework, reading, mocks, events, students, projects, blobs };
   }
 
   async function clearStore(name) {
@@ -336,6 +415,8 @@
     await clearStore(STORES.reading);
     await clearStore(STORES.mocks);
     await clearStore(STORES.events);
+    await clearStore(STORES.students);
+    await clearStore(STORES.projects);
     for (const s of payload.schools || []) {
       const store = await tx(STORES.schools, "readwrite");
       await reqP(store.put(s));
@@ -360,6 +441,22 @@
       const store = await tx(STORES.events, "readwrite");
       await reqP(store.put(ev));
     }
+    // Import students first so projects' studentId references resolve.
+    for (const st of payload.students || []) {
+      const store = await tx(STORES.students, "readwrite");
+      await reqP(store.put(st));
+    }
+    for (const p of payload.projects || []) {
+      const store = await tx(STORES.projects, "readwrite");
+      await reqP(store.put(p));
+    }
+    // Post-import safety: re-seed the default student if the backup carried none
+    // (e.g. a v1/v2 backup), so the app always has an active student.
+    const stu = await getStudents();
+    if (!stu.length) {
+      const store = await tx(STORES.students, "readwrite");
+      await reqP(store.put({ id: DEFAULT_STUDENT_ID, name: "L", createdAt: Date.now(), order: 1 }));
+    }
     for (const b of payload.blobs || []) {
       const store = await tx(STORES.blobs, "readwrite");
       await reqP(store.put({ id: b.id, blob: dataURLToBlob(b.dataURL), type: b.type, createdAt: b.createdAt }));
@@ -380,6 +477,8 @@
     getReading, addReading, updateReading, deleteReading,
     getMocks, addMocks, updateMocks, deleteMocks,
     getEvents, addEvent, updateEvent, deleteEvent,
+    getStudents, getActiveStudentId, setActiveStudentId, addStudent,
+    getProjects, addProject, updateProject, deleteProject,
     getBlob, putBlob, deleteBlob,
     getMeta, setMeta,
     exportAll, importAll,

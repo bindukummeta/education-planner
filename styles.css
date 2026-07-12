@@ -510,3 +510,54 @@ h2 { font-size: 18px; font-weight: 800; letter-spacing: -0.01em; margin: 0 0 14p
 .cal-dot-homework { background: var(--accent-2); }
 .cal-dot-mock { background: #6c8cff; }
 .cal-dot-custom { background: var(--muted); }
+
+/* ---- Play & Create ---- */
+.kid-greeting { background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 18%, var(--card)) 0%, var(--card) 100%); }
+.kid-greeting h2 { margin: 0; }
+.pc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.pc-card {
+  display: flex; flex-direction: column; gap: 8px;
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--r-lg); padding: 14px; box-shadow: var(--shadow-sm);
+}
+.pc-card .btn-primary, .pc-card .btn-secondary { margin-top: auto; }
+.pc-ico { font-size: 34px; line-height: 1; }
+.pc-title { font-weight: 800; font-size: 15px; letter-spacing: -0.01em; }
+.pc-meta { color: var(--muted); font-size: 12.5px; }
+.pc-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.pc-tags .chip { padding: 4px 10px; font-size: 12px; cursor: default; box-shadow: none; }
+.pc-focus { background: linear-gradient(135deg, var(--accent) 0%, var(--accent-strong) 100%); color: var(--accent-ink); border-color: transparent; }
+.pc-project .form-actions { margin-top: 4px; }
+.pc-status { padding: 4px 12px; border-radius: var(--r-pill); font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap; }
+.pc-status-progress { background: var(--rag-amber); color: var(--accent-ink); }
+.pc-status-done { background: var(--rag-green); color: #fff; }
+.pc-reflected { background: var(--card-2); color: var(--muted); border-color: var(--border); }
+.pc-reflect-summary { margin: 8px 0; padding: 10px 12px; background: var(--card-2); border-radius: var(--r-sm); }
+.pc-reflect-summary p { margin: 0 0 6px; font-size: 13px; }
+.pc-reflect-summary p:last-child { margin-bottom: 0; }
+.pc-reflect-summary textarea { width: 100%; }
+
+/* ---- Modal ---- */
+.modal { position: fixed; inset: 0; z-index: 70; display: flex; align-items: center; justify-content: center; }
+.modal.hidden { display: none; }
+.modal-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.45); }
+.modal-card {
+  position: relative; z-index: 1; margin: auto;
+  width: min(92vw, 420px); max-height: 88vh; overflow-y: auto;
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--r-lg); box-shadow: var(--shadow-lg); padding: 20px 18px;
+  transition: transform 0.18s ease, opacity 0.18s ease;
+}
+.modal-title { margin: 0 0 12px; padding-right: 28px; }
+.modal-close {
+  position: absolute; top: 12px; right: 12px;
+  width: 32px; height: 32px; border: none; border-radius: var(--r-sm);
+  background: var(--card-2); color: var(--muted); font-size: 16px; cursor: pointer;
+  transition: color 0.18s ease, background 0.18s ease;
+}
+.modal-close:hover { color: var(--rag-red); background: var(--card); }
+.modal-close:focus-visible { outline: none; box-shadow: var(--ring); }
+/* Reflection form controls reuse the existing .field input styling; ensure
+   textarea/select in the modal span the full width and inherit the theme. */
+.modal-body textarea, .modal-body select, .modal-body input { width: 100%; box-sizing: border-box; }
+.modal-body textarea { resize: vertical; font: inherit; }

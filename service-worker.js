@@ -1,4 +1,4 @@
-const CACHE = "eduplanner-v22";
+const CACHE = "eduplanner-v23";
 const ASSETS = [
   "./",
   "./index.html",

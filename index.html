@@ -30,6 +30,7 @@
       <li><button class="nav-item" data-view="homework"><span class="nav-ico">📖</span><span class="nav-label">Homework</span></button></li>
       <li><button class="nav-item" data-view="reading"><span class="nav-ico">📚</span><span class="nav-label">Reading</span></button></li>
       <li><button class="nav-item" data-view="mocks"><span class="nav-ico">📝</span><span class="nav-label">Mock Papers</span></button></li>
+      <li><button class="nav-item" data-view="playcreate"><span class="nav-ico">🎮</span><span class="nav-label">Play &amp; Create</span></button></li>
       <li><button class="nav-item" data-view="progress"><span class="nav-ico">📈</span><span class="nav-label">Progress</span></button></li>
       <li><button class="nav-item" data-view="coach"><span class="nav-ico">🎯</span><span class="nav-label">AI Coach</span></button></li>
       <li><button class="nav-item" data-view="calendar"><span class="nav-ico">📅</span><span class="nav-label">Calendar</span></button></li>
@@ -40,6 +41,7 @@
   <main>
     <!-- ============ DASHBOARD ============ -->
     <section id="view-dashboard" class="view hidden">
+      <div class="card kid-greeting"><h2 id="dash-greeting">Hi! Ready to learn today? 🌟</h2></div>
       <div class="dash-tiles">
         <div class="stat-tile" id="dash-countdown"></div>
         <div class="stat-tile" id="dash-streak"></div>
@@ -57,7 +59,8 @@
         <div id="dash-recent"></div>
       </div>
       <div class="view-actions">
-        <button type="button" class="btn-primary" data-goto="log">＋ Log work</button>
+        <button type="button" class="btn-primary" data-goto="playcreate">🎮 Play &amp; Create</button>
+        <button type="button" class="btn-secondary" data-goto="log">＋ Log work</button>
       </div>
     </section>
 
@@ -311,6 +314,20 @@
       <div id="mock-list"></div>
     </section>
 
+    <!-- ============ PLAY & CREATE ============ -->
+    <section id="view-playcreate" class="view hidden">
+      <div class="card">
+        <h2>🎮 Play &amp; Create</h2>
+        <p class="hint">Learn by playing, then build something of your own. Your projects are saved right here.</p>
+      </div>
+      <h2 class="section-heading">Play</h2>
+      <div class="pc-grid" id="pc-play-grid"></div>
+      <h2 class="section-heading">Create</h2>
+      <div class="pc-grid" id="pc-create-grid"></div>
+      <h2 class="section-heading">My Projects</h2>
+      <div id="pc-projects"></div>
+    </section>
+
     <!-- ============ AI COACH ============ -->
     <section id="view-coach" class="view hidden">
       <div class="card coach-panel">
@@ -366,6 +383,15 @@
   <div id="update-banner" class="update-banner hidden">
     <span>A new version is available.</span>
     <button type="button" id="update-reload" class="btn-primary">Reload</button>
+  </div>
+
+  <div id="modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title" aria-hidden="true">
+    <div id="modal-backdrop" class="modal-backdrop"></div>
+    <div class="modal-card">
+      <button type="button" id="modal-close" class="modal-close" aria-label="Close">✕</button>
+      <h2 id="modal-title" class="modal-title"></h2>
+      <div id="modal-body"></div>
+    </div>
   </div>
 
   <footer class="app-footer">

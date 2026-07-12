@@ -80,7 +80,7 @@
   // ---- view switching ----
   const VIEW_KEYS = [
     "dashboard", "schools", "log", "homework", "reading",
-    "mocks", "progress", "coach", "calendar", "settings",
+    "mocks", "playcreate", "progress", "coach", "calendar", "settings",
   ];
   const VIEW_RENDER = {
     dashboard: () => renderDashboard(),
@@ -88,6 +88,7 @@
     homework: () => renderHomework(),
     reading: () => renderReading(),
     mocks: () => renderMocks(),
+    playcreate: () => renderPlayCreate(),
     progress: () => renderProgress(),
     coach: () => prepareCoach(),
     calendar: () => renderCalendar(),
@@ -639,6 +640,12 @@
   }
   async function renderDashboard() {
     const today = todayISO();
+    const g = $("dash-greeting");
+    if (g) {
+      const h = new Date().getHours();
+      const part = h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
+      g.textContent = part + "! Ready to learn today? 🌟";
+    }
     // Next-exam countdown from the soonest future school exam date.
     const schools = await EduStore.getSchools();
     const upcoming = schools
@@ -1057,6 +1064,304 @@
     }
   }
 
+  // ============ PLAY & CREATE ============
+  const PLAY_GAMES = [
+    { title: "Vocabulary Quest",      icon: "📖", difficulty: "Easy",   minutes: 10, skillSubject: "vr",             skillsText: "Builds the vocabulary that powers verbal reasoning." },
+    { title: "Times Table Sprint",    icon: "✖️", difficulty: "Medium", minutes: 5,  skillSubject: "maths",          skillsText: "Fast recall of times tables for mental maths." },
+    { title: "Pattern Detective",     icon: "🧩", difficulty: "Medium", minutes: 12, skillSubject: "nvr",            skillsText: "Spot sequences and shapes — core non-verbal reasoning." },
+    { title: "Spelling Wizard",       icon: "🔤", difficulty: "Easy",   minutes: 8,  skillSubject: "english",        skillsText: "Tricky spellings, one spell at a time." },
+    { title: "Reading Treasure Hunt", icon: "🗺️", difficulty: "Hard",   minutes: 15, skillSubject: "english",        skillsText: "Comprehension clues hidden in a story." },
+    { title: "Grammar Challenge",     icon: "✍️", difficulty: "Medium", minutes: 10, skillSubject: "creativeWriting", skillsText: "Punctuation and sentence power-ups for great writing." },
+  ];
+  const CREATE_CATEGORIES = [
+    { title: "Roblox Studio",       icon: "🟥", description: "Design your own game world.",     tool: "Roblox Studio" },
+    { title: "Scratch",            icon: "🐱", description: "Snap blocks together to code.",   tool: "Scratch" },
+    { title: "Coding Projects",     icon: "💻", description: "Build an app or website idea.",   tool: "Code" },
+    { title: "Story Writing",       icon: "📚", description: "Write and illustrate a story.",   tool: "Writing" },
+    { title: "Art & Crafts",        icon: "🎨", description: "Make something with your hands.",  tool: "Art" },
+    { title: "Science Experiments", icon: "🔬", description: "Try a safe home experiment.",     tool: "Science" },
+  ];
+
+  // ---- focus quest (encouraging framing — NEVER "weakest subject") ----
+  // Internally we still find the lowest recent average (reusing subjectRecentAvg,
+  // the same pipeline as Progress/Readiness), but the CHILD only ever sees
+  // adventurous, positive phrasing. Returns { subject, label } or null when there
+  // is no scored data yet.
+  async function focusSubject() {
+    let worst = null;
+    for (const s of SUBJECTS) {
+      const r = await subjectRecentAvg(s, 0);
+      if (r == null) continue;
+      if (worst == null || r.avg < worst.avg) {
+        worst = { subject: s, label: SUBJECT_LABEL[s] };
+      }
+    }
+    return worst;
+  }
+
+  // Encouraging, kid-safe phrases. `{s}` is replaced with the subject label.
+  // NOTE: no negative words ("weak", "worst", "bad") anywhere.
+  const FOCUS_PHRASES = [
+    "🎯 Your focus this week",
+    "🚀 Ready to strengthen {s}?",
+    "🗺️ Your next skill quest",
+    "✨ {s} could use a little boost",
+    "🌟 Recommended adventure",
+  ];
+  // Session-stable pick: the phrase index is chosen once per page load and cached
+  // on window, so re-renders within a session don't reshuffle the wording.
+  function focusPhrase(subjectLabel) {
+    if (window.__focusPhraseIdx == null) {
+      window.__focusPhraseIdx = Math.floor(Math.random() * FOCUS_PHRASES.length);
+    }
+    return FOCUS_PHRASES[window.__focusPhraseIdx].replace("{s}", subjectLabel || "this skill");
+  }
+
+  async function renderPlayCreate() {
+    // ---- PLAY ----
+    const focus = await focusSubject();
+    const focusText = focus ? focusPhrase(focus.label) : "";
+    const playGrid = $("pc-play-grid");
+    playGrid.innerHTML = "";
+    PLAY_GAMES.forEach((g) => {
+      const isFocus = focus && g.skillSubject === focus.subject;
+      const skillLabel = SUBJECT_LABEL[g.skillSubject] || g.skillSubject;
+      const card = document.createElement("div");
+      card.className = "pc-card";
+      card.innerHTML =
+        '<div class="pc-ico">' + g.icon + "</div>" +
+        '<div class="pc-title">' + esc(g.title) + "</div>" +
+        '<div class="pc-meta">' + esc(g.difficulty) + " · " + g.minutes + " min</div>" +
+        '<div class="pc-tags">' +
+        (isFocus
+          ? '<span class="chip pc-focus">' + esc(focusText) + "</span>"
+          : '<span class="chip">' + esc(skillLabel) + "</span>") +
+        "</div>";
+      const btn = document.createElement("button");
+      btn.className = "btn-primary";
+      btn.textContent = "▶ Play";
+      btn.addEventListener("click", () =>
+        openModal(g.title,
+          "<p>" + esc(g.skillsText) + "</p>" +
+          '<p class="hint">This game will be available soon. Check back after the next update!</p>'));
+      card.appendChild(btn);
+      playGrid.appendChild(card);
+    });
+
+    // ---- CREATE ----
+    const createGrid = $("pc-create-grid");
+    createGrid.innerHTML = "";
+    CREATE_CATEGORIES.forEach((c) => {
+      const card = document.createElement("div");
+      card.className = "pc-card";
+      card.innerHTML =
+        '<div class="pc-ico">' + c.icon + "</div>" +
+        '<div class="pc-title">' + esc(c.title) + "</div>" +
+        '<div class="pc-meta">' + esc(c.description) + "</div>";
+      const btn = document.createElement("button");
+      btn.className = "btn-primary";
+      btn.textContent = "✎ Start a project";
+      btn.addEventListener("click", () => openStartProject(c));
+      card.appendChild(btn);
+      createGrid.appendChild(card);
+    });
+
+    // ---- MY PROJECTS ----
+    await renderProjects();
+  }
+
+  // CREATE "start" modal: a tiny form that creates a real in-app project.
+  function openStartProject(category) {
+    const html =
+      '<form id="project-form">' +
+      '<div class="field"><label for="p-name">Project name</label>' +
+      '<input id="p-name" value="' + esc(category.title + " project") + '" /></div>' +
+      '<div class="field"><label for="p-skills">Skills (comma separated, optional)</label>' +
+      '<input id="p-skills" placeholder="e.g. coding, design" /></div>' +
+      '<div class="form-actions"><button type="submit" class="btn-primary">Create</button></div>' +
+      "</form>";
+    openModal("Start: " + category.title, html);
+    $("project-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const name = $("p-name").value.trim() || category.title + " project";
+      const skills = $("p-skills").value.split(",").map((s) => s.trim()).filter(Boolean);
+      const now = Date.now();
+      await EduStore.addProject({
+        name: name, category: category.title, tool: category.tool,
+        status: "in_progress", skills: skills, note: "",
+        // Reflection + self-ratings start empty; captured later via "Reflect".
+        reflection: { proudOf: "", challenge: "", nextStep: "" },
+        confidence: null, enjoyment: null,
+        createdAt: now, updatedAt: now,
+      });
+      closeModal();
+      renderPlayCreate();
+    });
+  }
+
+  // My Projects list — mirrors renderReading's list+delete pattern exactly.
+  async function renderProjects() {
+    const list = $("pc-projects");
+    const projects = await EduStore.getProjects(); // already sorted updatedAt desc
+    if (!projects.length) {
+      list.innerHTML = '<p class="empty">No projects yet — pick something in Create above and start building! 🚀</p>';
+      return;
+    }
+    list.innerHTML = "";
+    projects.forEach((r) => {
+      const done = r.status === "completed";
+      const statusCls = done ? "pc-status-done" : "pc-status-progress";
+      const statusText = done ? "✓ Completed" : "● In Progress";
+      const updated = new Date(r.updatedAt || r.createdAt || Date.now()).toISOString().slice(0, 10);
+      const skills = (r.skills || []).map((s) => '<span class="chip">' + esc(s) + "</span>").join("");
+      // Show a gentle indicator once the child has reflected on the project.
+      const ref = r.reflection || {};
+      const hasReflected = !!(ref.proudOf || ref.challenge || ref.nextStep) ||
+        r.confidence != null || r.enjoyment != null;
+      const reflectChip = hasReflected ? '<span class="chip pc-reflected">📝 Reflected</span>' : "";
+      const row = document.createElement("div");
+      row.className = "pc-card pc-project";
+      row.innerHTML =
+        '<div class="pc-title">' + esc(r.name) + "</div>" +
+        '<div class="pc-meta">' + esc(r.category) + (r.tool ? " · " + esc(r.tool) : "") + "</div>" +
+        '<div class="pc-tags"><span class="pc-status ' + statusCls + '">' + statusText + "</span>" + reflectChip + skills + "</div>" +
+        '<div class="pc-meta">Updated ' + esc(updated) + "</div>";
+      // Status chip toggles status in place.
+      row.querySelector(".pc-status").addEventListener("click", async () => {
+        await EduStore.updateProject(r.id, { status: done ? "in_progress" : "completed" });
+        renderPlayCreate();
+      });
+      const actions = document.createElement("div");
+      actions.className = "form-actions";
+      const open = document.createElement("button");
+      open.className = "btn-secondary";
+      open.textContent = "Open";
+      open.addEventListener("click", () => openProjectDetail(r));
+      // Dedicated "Reflect" button (per the reflection requirement).
+      const reflect = document.createElement("button");
+      reflect.className = "btn-secondary";
+      reflect.textContent = "📝 Reflect";
+      reflect.addEventListener("click", () => openProjectReflect(r));
+      const del = document.createElement("button");
+      del.className = "entry-del";
+      del.setAttribute("aria-label", "Delete");
+      del.textContent = "🗑";
+      del.addEventListener("click", async () => {
+        if (!confirm("Delete this project?")) return;
+        await EduStore.deleteProject(r.id);
+        renderPlayCreate();
+      });
+      actions.appendChild(open);
+      actions.appendChild(reflect);
+      actions.appendChild(del);
+      row.appendChild(actions);
+      list.appendChild(row);
+    });
+  }
+
+  // Project detail modal: mark complete/reopen + add a skill + view reflection.
+  function openProjectDetail(r) {
+    const done = r.status === "completed";
+    const skills = (r.skills || []).map((s) => '<span class="chip">' + esc(s) + "</span>").join("")
+      || '<span class="hint">No skills tagged yet.</span>';
+    // Read-only summary of any captured reflection (edited via the Reflect button).
+    const ref = r.reflection || {};
+    const rating = (v) => (v == null ? "—" : "⭐".repeat(v));
+    let reflectionBlock = "";
+    if (ref.proudOf || ref.challenge || ref.nextStep || r.confidence != null || r.enjoyment != null) {
+      reflectionBlock =
+        '<div class="pc-reflect-summary">' +
+        (ref.proudOf ? '<p><strong>Proud of:</strong> ' + esc(ref.proudOf) + "</p>" : "") +
+        (ref.challenge ? '<p><strong>Was difficult:</strong> ' + esc(ref.challenge) + "</p>" : "") +
+        (ref.nextStep ? '<p><strong>Will try next:</strong> ' + esc(ref.nextStep) + "</p>" : "") +
+        '<p class="pc-meta">Confidence: ' + rating(r.confidence) + " · Enjoyment: " + rating(r.enjoyment) + "</p>" +
+        "</div>";
+    }
+    const html =
+      '<div class="pc-meta">' + esc(r.category) + (r.tool ? " · " + esc(r.tool) : "") + "</div>" +
+      '<div class="pc-tags">' + skills + "</div>" +
+      reflectionBlock +
+      '<div class="field"><label for="p-add-skill">Add a skill</label>' +
+      '<input id="p-add-skill" placeholder="e.g. animation" /></div>' +
+      '<div class="form-actions">' +
+      '<button type="button" id="p-toggle" class="btn-primary">' + (done ? "Reopen" : "Mark complete") + "</button>" +
+      '<button type="button" id="p-reflect-btn" class="btn-secondary">📝 Reflect</button>' +
+      '<button type="button" id="p-add-skill-btn" class="btn-secondary">Add skill</button>' +
+      "</div>";
+    openModal(r.name, html);
+    $("p-toggle").addEventListener("click", async () => {
+      await EduStore.updateProject(r.id, { status: done ? "in_progress" : "completed" });
+      closeModal();
+      renderPlayCreate();
+    });
+    $("p-reflect-btn").addEventListener("click", () => openProjectReflect(r));
+    $("p-add-skill-btn").addEventListener("click", async () => {
+      const v = $("p-add-skill").value.trim();
+      if (!v) return;
+      await EduStore.updateProject(r.id, { skills: (r.skills || []).concat([v]) });
+      closeModal();
+      renderPlayCreate();
+    });
+  }
+
+  // Reflection modal (dedicated "Reflect" flow). Captures the three qualitative
+  // prompts + two 1..5 self-ratings. All fields optional; kid-friendly wording.
+  function openProjectReflect(r) {
+    const ref = r.reflection || {};
+    const sel = (v, n) => 'value="' + n + '"' + (v === n ? " selected" : "");
+    const ratingSelect = (id, label, cur) =>
+      '<div class="field"><label for="' + id + '">' + label + "</label>" +
+      '<select id="' + id + '">' +
+      '<option value="" ' + (cur == null ? "selected" : "") + ">—</option>" +
+      "<option " + sel(cur, 1) + ">1</option><option " + sel(cur, 2) + ">2</option>" +
+      "<option " + sel(cur, 3) + ">3</option><option " + sel(cur, 4) + ">4</option>" +
+      "<option " + sel(cur, 5) + ">5</option></select></div>";
+    const html =
+      '<form id="reflect-form">' +
+      '<div class="field"><label for="r-proud">What are you proud of? 🌟</label>' +
+      '<textarea id="r-proud" rows="2">' + esc(ref.proudOf || "") + "</textarea></div>" +
+      '<div class="field"><label for="r-challenge">What was difficult? 🤔</label>' +
+      '<textarea id="r-challenge" rows="2">' + esc(ref.challenge || "") + "</textarea></div>" +
+      '<div class="field"><label for="r-next">What will you try next? 🚀</label>' +
+      '<textarea id="r-next" rows="2">' + esc(ref.nextStep || "") + "</textarea></div>" +
+      ratingSelect("r-confidence", "How confident do you feel? (1–5)", r.confidence) +
+      ratingSelect("r-enjoyment", "How much did you enjoy it? (1–5)", r.enjoyment) +
+      '<div class="form-actions"><button type="submit" class="btn-primary">Save reflection</button></div>' +
+      "</form>";
+    openModal("Reflect: " + r.name, html);
+    const numOrNull = (v) => (v === "" ? null : Number(v));
+    $("reflect-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      await EduStore.updateProject(r.id, {
+        reflection: {
+          proudOf: $("r-proud").value.trim(),
+          challenge: $("r-challenge").value.trim(),
+          nextStep: $("r-next").value.trim(),
+        },
+        confidence: numOrNull($("r-confidence").value),
+        enjoyment: numOrNull($("r-enjoyment").value),
+      });
+      closeModal();
+      renderPlayCreate();
+    });
+  }
+
+  // ---- reusable modal (no existing dialog component; mirrors drawer a11y) ----
+  function openModal(title, bodyHTML) {
+    $("modal-title").textContent = title;
+    $("modal-body").innerHTML = bodyHTML;
+    $("modal").classList.remove("hidden");
+    $("modal").setAttribute("aria-hidden", "false");
+    $("modal-close").focus();
+  }
+  function closeModal() {
+    const m = $("modal");
+    if (!m) return;
+    m.classList.add("hidden");
+    m.setAttribute("aria-hidden", "true");
+  }
+  // ========== END PLAY & CREATE ==========
+
   // ============ SETTINGS ============
   function renderSettings() {
     const el = $("app-version");
@@ -1083,10 +1388,12 @@
       b.addEventListener("click", () => showView(b.dataset.goto)));
     $("menu-btn").addEventListener("click", toggleDrawer);
     $("drawer-backdrop").addEventListener("click", closeDrawer);
+    $("modal-close").addEventListener("click", closeModal);
+    $("modal-backdrop").addEventListener("click", closeModal);
     document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape" && $("drawer").classList.contains("open")) {
-        closeDrawer(); $("menu-btn").focus();
-      }
+      if (e.key !== "Escape") return;
+      if ($("modal") && !$("modal").classList.contains("hidden")) { closeModal(); return; }
+      if ($("drawer").classList.contains("open")) { closeDrawer(); $("menu-btn").focus(); }
     });
     $("save-home-postcode").addEventListener("click", saveHomePostcode);
     $("reset-seed").addEventListener("click", resetToSeed);
