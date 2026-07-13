@@ -1,4 +1,4 @@
-const CACHE = "eduplanner-v24";
+const CACHE = "eduplanner-v25";
 const ASSETS = [
   "./",
   "./index.html",
@@ -10,6 +10,9 @@ const ASSETS = [
   "./icons/icon-192.png",
   "./icons/icon-512.png",
 ];
+// Tesseract's engine + language model (~10–15 MB) are NOT precached — they are
+// fetched on first use of the Homework Analyzer and then cached by the
+// stale-while-revalidate handler below, so the shell stays lightweight.
 
 self.addEventListener("install", (event) => {
   // Pre-cache the shell. Do NOT skipWaiting here — the page decides when to

@@ -7,7 +7,7 @@
   "use strict";
 
   const DB_NAME = "eduplanner";
-  const DB_VERSION = 4;
+  const DB_VERSION = 5;
   const DEFAULT_STUDENT_ID = "student-1";
   const STORES = {
     schools: "schools",
@@ -21,6 +21,7 @@
     students: "students",
     projects: "projects",
     curiosity: "curiosity",
+    analyses: "analyses",
   };
 
   let dbPromise = null;
@@ -103,6 +104,14 @@
           s.createIndex("subject", "subject", { unique: false });
           s.createIndex("author", "author", { unique: false });
           s.createIndex("updatedAt", "updatedAt", { unique: false });
+        }
+        if (!db.objectStoreNames.contains(STORES.analyses)) {
+          const s = db.createObjectStore(STORES.analyses, { keyPath: "id" });
+          s.createIndex("studentId", "studentId", { unique: false });
+          s.createIndex("source", "source", { unique: false });
+          s.createIndex("subject", "subject", { unique: false });
+          s.createIndex("createdAt", "createdAt", { unique: false });
+          s.createIndex("linkedId", "linkedId", { unique: false });
         }
       };
       req.onsuccess = () => resolve(req.result);
@@ -389,6 +398,47 @@
     return reqP(store.delete(id));
   }
 
+  // ---- analyses (Homework Analyzer; persists a WorksheetAnalysis per capture) ----
+  async function getAnalyses(filter) {
+    filter = filter || {};
+    const store = await tx(STORES.analyses, "readonly");
+    let rows = await reqP(store.getAll());
+    const all = filter.studentId === "*ALL*";
+    if (!all) {
+      const sid = filter.studentId || (await getActiveStudentId());
+      rows = rows.filter((r) => (r.studentId || DEFAULT_STUDENT_ID) === sid);
+    }
+    if (filter.source) rows = rows.filter((r) => r.source === filter.source);
+    if (filter.subject) rows = rows.filter((r) => (r.overall && r.overall.subject) === filter.subject);
+    return rows.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  }
+  async function addAnalysis(rec) {
+    const now = Date.now();
+    const record = Object.assign(
+      { id: uid(), studentId: DEFAULT_STUDENT_ID, createdAt: now, updatedAt: now },
+      rec
+    );
+    const store = await tx(STORES.analyses, "readwrite");
+    await reqP(store.put(record));
+    return record;
+  }
+  async function updateAnalysis(id, patch) {
+    const store = await tx(STORES.analyses, "readonly");
+    const cur = await reqP(store.get(id));
+    if (!cur) return null;
+    const record = Object.assign({}, cur, patch, { updatedAt: Date.now() });
+    const rw = await tx(STORES.analyses, "readwrite");
+    await reqP(rw.put(record));
+    return record;
+  }
+  async function deleteAnalysis(id) {
+    const store = await tx(STORES.analyses, "readonly");
+    const rec = await reqP(store.get(id));
+    if (rec && rec.blobId) await deleteBlob(rec.blobId);
+    const rw = await tx(STORES.analyses, "readwrite");
+    return reqP(rw.delete(id));
+  }
+
   // ---- blobs ----
   async function putBlob(blob, type) {
     const record = { id: uid(), blob: blob, type: type || "image/jpeg", createdAt: Date.now() };
@@ -445,13 +495,14 @@
     const students = await getStudents();
     const projects = await getProjects({ studentId: "*ALL*" });
     const curiosity = await getCuriosity({ studentId: "*ALL*" });
+    const analyses = await getAnalyses({ studentId: "*ALL*" });
     const blobStore = await tx(STORES.blobs, "readonly");
     const rawBlobs = await reqP(blobStore.getAll());
     const blobs = [];
     for (const b of rawBlobs) {
       blobs.push({ id: b.id, type: b.type, createdAt: b.createdAt, dataURL: await blobToDataURL(b.blob) });
     }
-    return { version: 4, exportedAt: Date.now(), schools, entries, homework, reading, mocks, events, students, projects, curiosity, blobs };
+    return { version: 5, exportedAt: Date.now(), schools, entries, homework, reading, mocks, events, students, projects, curiosity, analyses, blobs };
   }
 
   async function clearStore(name) {
@@ -471,6 +522,7 @@
     await clearStore(STORES.students);
     await clearStore(STORES.projects);
     await clearStore(STORES.curiosity);
+    await clearStore(STORES.analyses);
     for (const s of payload.schools || []) {
       const store = await tx(STORES.schools, "readwrite");
       await reqP(store.put(s));
@@ -509,6 +561,11 @@
       const store = await tx(STORES.curiosity, "readwrite");
       await reqP(store.put(c));
     }
+    // The `|| []` keeps v1–v4 backups (no analyses key) importing cleanly.
+    for (const a of payload.analyses || []) {
+      const store = await tx(STORES.analyses, "readwrite");
+      await reqP(store.put(a));
+    }
     // Post-import safety: re-seed the default student if the backup carried none
     // (e.g. a v1/v2 backup), so the app always has an active student.
     const stu = await getStudents();
@@ -539,6 +596,7 @@
     getStudents, getActiveStudentId, setActiveStudentId, addStudent,
     getProjects, addProject, updateProject, deleteProject,
     getCuriosity, addCuriosity, updateCuriosity, deleteCuriosity,
+    getAnalyses, addAnalysis, updateAnalysis, deleteAnalysis,
     getBlob, putBlob, deleteBlob,
     getMeta, setMeta,
     exportAll, importAll,

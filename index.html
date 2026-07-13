@@ -32,6 +32,7 @@
       <li><button class="nav-item" data-view="mocks"><span class="nav-ico">📝</span><span class="nav-label">Mock Papers</span></button></li>
       <li><button class="nav-item" data-view="playcreate"><span class="nav-ico">🎮</span><span class="nav-label">Play &amp; Create</span></button></li>
       <li><button class="nav-item" data-view="curiosity"><span class="nav-ico">💡</span><span class="nav-label">Curiosity</span></button></li>
+      <li><button class="nav-item" data-view="analyzer"><span class="nav-ico">📸</span><span class="nav-label">Homework Analyzer</span></button></li>
       <li><button class="nav-item" data-view="progress"><span class="nav-ico">📈</span><span class="nav-label">Progress</span></button></li>
       <li><button class="nav-item" data-view="coach"><span class="nav-ico">🎯</span><span class="nav-label">AI Coach</span></button></li>
       <li><button class="nav-item" data-view="calendar"><span class="nav-ico">📅</span><span class="nav-label">Calendar</span></button></li>
@@ -62,6 +63,7 @@
       <div class="view-actions">
         <button type="button" class="btn-primary" data-goto="playcreate">🎮 Play &amp; Create</button>
         <button type="button" class="btn-secondary" data-goto="curiosity" data-goto-then="cur-add">💡 I wonder…</button>
+        <button type="button" class="btn-secondary" data-goto="analyzer" data-goto-then="an-add">📸 Scan homework</button>
         <button type="button" class="btn-secondary" data-goto="log">＋ Log work</button>
       </div>
     </section>
@@ -343,6 +345,23 @@
       <div id="cur-patterns"></div>
       <div class="cur-filters" id="cur-filters"></div>
       <div id="cur-list"></div>
+    </section>
+
+    <!-- ============ HOMEWORK ANALYZER ============ -->
+    <section id="view-analyzer" class="view hidden">
+      <div class="card">
+        <h2>📸 Homework Analyzer</h2>
+        <p class="hint">Take a photo of a printed worksheet. Everything stays on this device — nothing is uploaded.</p>
+        <div class="an-mode-row">
+          <span class="an-mode an-mode-on">🔒 Private Scan Mode</span>
+          <label class="an-mode an-mode-off"><input type="checkbox" id="an-enhanced" disabled> ✨ Enhanced AI <span class="an-soon">(coming soon)</span></label>
+        </div>
+      </div>
+      <div class="view-actions">
+        <button type="button" id="an-add" class="btn-primary">📸 Scan a worksheet</button>
+      </div>
+      <div id="an-insights"></div>
+      <div id="an-list"></div>
     </section>
 
     <!-- ============ AI COACH ============ -->

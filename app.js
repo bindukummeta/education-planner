@@ -80,7 +80,7 @@
   // ---- view switching ----
   const VIEW_KEYS = [
     "dashboard", "schools", "log", "homework", "reading",
-    "mocks", "playcreate", "curiosity", "progress", "coach", "calendar", "settings",
+    "mocks", "playcreate", "curiosity", "analyzer", "progress", "coach", "calendar", "settings",
   ];
   const VIEW_RENDER = {
     dashboard: () => renderDashboard(),
@@ -90,6 +90,7 @@
     mocks: () => renderMocks(),
     playcreate: () => renderPlayCreate(),
     curiosity: () => renderCuriosity(),
+    analyzer: () => renderAnalyzer(),
     progress: () => renderProgress(),
     coach: () => prepareCoach(),
     calendar: () => renderCalendar(),
@@ -1765,6 +1766,436 @@
       "<ul>" + lines.map((l) => "<li>" + l + "</li>").join("") + "</ul>" + parentLine + "</div>";
   }
   // ========== END CURIOSITY ==========
+
+  // ============ HOMEWORK ANALYZER ============
+  // Self-contained block. Reaches out only to shared helpers ($, esc, openModal/
+  // closeModal, SUBJECTS, SUBJECT_LABEL, compressImage, EduStore) plus a one-way
+  // read of computeReadiness() for the school-evidence echo. Entry point wired in
+  // VIEW_RENDER: renderAnalyzer(). Everything is LOCAL — no photo ever leaves the
+  // device in this (Private Scan) mode. Enhanced AI (Mode B) is a guarded stub.
+
+  const AN_ERROR_CATEGORIES = [
+    { key: "concept",     label: "Concept" },
+    { key: "calculation", label: "Calculation slip" },
+    { key: "instruction", label: "Misread instruction" },
+    { key: "incomplete",  label: "Incomplete" },
+    { key: "time",        label: "Ran out of time" },
+    { key: "skipped",     label: "Skipped" },
+    { key: "other",       label: "Other" },
+  ];
+  const AN_SUPPORT_LEVELS = [
+    { key: "independent", label: "On her own" },
+    { key: "hint",        label: "With a hint" },
+    { key: "guided",      label: "Guided together" },
+  ];
+  // Topic keyword map, Maths-first for the v1 pilot (extensible per subject).
+  const AN_TOPIC_KEYWORDS = {
+    maths: [
+      { topic: "fractions",   words: ["fraction", "numerator", "denominator", "/"] },
+      { topic: "decimals",    words: ["decimal", "point", "tenth", "hundredth"] },
+      { topic: "percentages", words: ["percent", "percentage", "%"] },
+      { topic: "arithmetic",  words: ["add", "sum", "subtract", "minus", "multiply", "times", "divide", "+", "−", "-", "×", "÷"] },
+      { topic: "geometry",    words: ["angle", "triangle", "rectangle", "area", "perimeter", "shape", "degrees"] },
+      { topic: "measures",    words: ["metre", "meter", "gram", "litre", "kg", "cm", "mm", "km"] },
+      { topic: "time",        words: ["clock", "hour", "minute", "o'clock", "am", "pm"] },
+      { topic: "money",       words: ["£", "$", "pence", "pound", "cost", "change", "price"] },
+      { topic: "word-problem",words: ["altogether", "how many", "how much", "in total", "left", "share"] },
+    ],
+  };
+
+  // Deterministic, transparent complexity ESTIMATE (1..5). Always editable by the
+  // parent — this is a starting point, never a verdict. Same input → same output.
+  function estimateComplexity(text, subject) {
+    const t = String(text || "").toLowerCase();
+    if (!t.trim()) return 2;
+    let score = 1;
+    const words = t.split(/\s+/).filter(Boolean).length;
+    if (words > 8) score += 1;
+    if (words > 20) score += 1;
+    // Multi-step / reasoning signals (subject-agnostic).
+    if (/(explain|why|because|show your working|justify|estimate)/.test(t)) score += 1;
+    if (subject === "maths") {
+      const numbers = (t.match(/\d+/g) || []).length;
+      if (numbers >= 3) score += 1;
+      // Chained operations suggest multi-step work.
+      const ops = (t.match(/[+\-−×÷*/]/g) || []).length;
+      if (ops >= 2) score += 1;
+      if (/(altogether|in total|how many|how much|left over|share)/.test(t)) score += 1;
+    }
+    return Math.max(1, Math.min(5, score));
+  }
+
+  function guessTopic(text, subject) {
+    const t = String(text || "").toLowerCase();
+    const table = AN_TOPIC_KEYWORDS[subject] || [];
+    for (const row of table) {
+      if (row.words.some((w) => t.indexOf(w) >= 0)) return row.topic;
+    }
+    return "";
+  }
+
+  // ---- provider seam (§3a) ----
+  // The review/save/render code depends ONLY on analyseWorksheet + the
+  // WorksheetAnalysis/QuestionAttempt shapes, never on Tesseract directly, so a
+  // future server-side provider slots in with no UI or storage change.
+  async function analyseWorksheet(image, options) {
+    options = options || {};
+    const mode = options.mode || "local";
+    if (mode === "local") return localScanProvider(image, options);
+    return enhancedAiProvider(image, options);
+  }
+
+  // Mode B — not implemented in v1. Guarded stub so the seam is future-proof.
+  async function enhancedAiProvider() {
+    throw new Error("Enhanced AI not enabled");
+  }
+
+  // Lazy-load the vendored Tesseract engine only on first use (keeps the rest of
+  // the app light). All asset paths are local so it works offline once cached.
+  let __tesseractPromise = null;
+  function ensureTesseract() {
+    if (window.Tesseract) return Promise.resolve(window.Tesseract);
+    if (__tesseractPromise) return __tesseractPromise;
+    __tesseractPromise = new Promise((resolve, reject) => {
+      const s = document.createElement("script");
+      s.src = "vendor/tesseract/tesseract.min.js";
+      s.onload = () => (window.Tesseract ? resolve(window.Tesseract) : reject(new Error("Tesseract failed to load")));
+      s.onerror = () => reject(new Error("Could not load the scanner engine"));
+      document.head.appendChild(s);
+    });
+    return __tesseractPromise;
+  }
+
+  // Mode A — on-device OCR of PRINTED question text only. Correctness/marks always
+  // come from the parent, never OCR. Returns a WorksheetAnalysis (unsaved).
+  async function localScanProvider(image, options) {
+    const onProgress = options.onProgress || function () {};
+    let text = "";
+    try {
+      const Tesseract = await ensureTesseract();
+      onProgress(0.05);
+      const result = await Tesseract.recognize(image, "eng", {
+        // Directory paths let the worker auto-pick the best vendored core
+        // variant (simd / lstm) for the browser; all four are vendored locally.
+        langPath: "vendor/tesseract/lang",
+        corePath: "vendor/tesseract",
+        workerPath: "vendor/tesseract/worker.min.js",
+        logger: (m) => { if (m && m.status === "recognizing text" && typeof m.progress === "number") onProgress(m.progress); },
+      });
+      text = (result && result.data && result.data.text) || "";
+    } catch (e) {
+      // Fall through with empty text — the review UI offers manual entry.
+      text = "";
+    }
+    onProgress(1);
+    const subject = options.subject || "maths";
+    const attempts = splitQuestions(text).map((qtext) => makeAttempt(qtext, subject));
+    return {
+      source: options.source || "worksheet",
+      mode: "local",
+      overall: { subject: subject, score: null, avgComplexity: null },
+      attempts: attempts,
+    };
+  }
+
+  // Split OCR text into candidate questions: one numbered item / non-empty line =
+  // one question. Deliberately simple for the one-page worksheet pilot.
+  function splitQuestions(text) {
+    return String(text || "")
+      .split(/\r?\n/)
+      .map((l) => l.replace(/^\s*(\d+[\).\]]|[a-z][\).\]]|[-•*])\s*/i, "").trim())
+      .filter((l) => l.length >= 2);
+  }
+
+  function makeAttempt(text, subject) {
+    return {
+      questionText: text,
+      subject: subject,
+      topic: guessTopic(text, subject),
+      subskill: "",
+      complexity: estimateComplexity(text, subject),
+      studentAnswer: "",
+      expectedAnswer: "",
+      marksAwarded: null,
+      marksAvailable: null,
+      errorType: "",
+      supportLevel: "",
+      confidence: null,
+      needsReview: true,
+      parentApproved: false,
+    };
+  }
+
+  // Derived correctness from marks: full → correct, zero → incorrect, else partial.
+  function attemptOutcome(a) {
+    const aw = a.marksAwarded, av = a.marksAvailable;
+    if (aw == null || av == null || av <= 0) return "unmarked";
+    if (aw >= av) return "correct";
+    if (aw <= 0) return "incorrect";
+    return "partial";
+  }
+
+  // Working draft during a capture→review session (before it is saved).
+  let anDraft = null;
+
+  async function renderAnalyzer() {
+    const addBtn = $("an-add");
+    if (addBtn && !addBtn.__wired) {
+      addBtn.__wired = true;
+      addBtn.addEventListener("click", openAnalyzerCapture);
+    }
+    await renderAnalyzerInsights();
+    await renderAnalyzerList();
+  }
+
+  // Capture: pick/scan a printed worksheet photo, confirm subject, run OCR.
+  function openAnalyzerCapture() {
+    const subjOpts = SUBJECTS.map((s) =>
+      '<option value="' + s + '"' + (s === "maths" ? " selected" : "") + ">" + esc(SUBJECT_LABEL[s]) + "</option>").join("");
+    openModal("Scan a worksheet",
+      '<form id="an-form" class="an-form">' +
+      '<p class="hint">🔒 Private Scan reads the <b>printed questions</b> on the page. Your child\'s handwritten answers stay for you to mark with ✓ / part-marks / ✗ — the photo never leaves this device.</p>' +
+      '<label>Subject<select id="an-subject">' + subjOpts + "</select></label>" +
+      '<label>Worksheet photo<input type="file" id="an-image" accept="image/*" capture="environment" required></label>' +
+      '<div id="an-progress" class="an-progress hidden"><div class="an-bar"><span></span></div><span class="an-progress-txt">Reading the page…</span></div>' +
+      '<div class="form-actions"><button type="submit" class="btn-primary">Scan</button>' +
+      '<button type="button" id="an-manual" class="btn-secondary">Enter by hand instead</button></div>' +
+      "</form>");
+    $("an-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const file = $("an-image").files[0];
+      if (!file) return;
+      const subject = $("an-subject").value;
+      const prog = $("an-progress");
+      const bar = prog.querySelector(".an-bar span");
+      prog.classList.remove("hidden");
+      let blobId = null;
+      let blob = file;
+      try { blob = await compressImage(file); blobId = await EduStore.putBlob(blob, "image/jpeg"); }
+      catch (_) { blobId = null; }
+      let analysis;
+      try {
+        analysis = await analyseWorksheet(blob, {
+          mode: "local", subject: subject,
+          onProgress: (p) => { bar.style.width = Math.round((p || 0) * 100) + "%"; },
+        });
+      } catch (_) {
+        analysis = { source: "worksheet", mode: "local", overall: { subject: subject, score: null, avgComplexity: null }, attempts: [] };
+      }
+      anDraft = Object.assign({ blobId: blobId }, analysis);
+      openAnalyzerReview();
+    });
+    $("an-manual").addEventListener("click", () => {
+      const subject = $("an-subject").value;
+      anDraft = { blobId: null, source: "worksheet", mode: "local", overall: { subject: subject, score: null, avgComplexity: null }, attempts: [] };
+      openAnalyzerReview();
+    });
+  }
+
+  // Review + tag: the parent confirms subject, edits/adds questions, records marks
+  // (partial allowed), optional error category + support level, and approves.
+  function openAnalyzerReview() {
+    if (!anDraft) return;
+    const subjOpts = SUBJECTS.map((s) =>
+      '<option value="' + s + '"' + (s === anDraft.overall.subject ? " selected" : "") + ">" + esc(SUBJECT_LABEL[s]) + "</option>").join("");
+    openModal("Review worksheet",
+      '<div class="an-review">' +
+      '<label>Subject<select id="an-r-subject">' + subjOpts + "</select></label>" +
+      '<p class="hint">Tick each question with ✓ (full), part marks, or ✗ (none). Complexity is an editable estimate.</p>' +
+      '<div id="an-rows"></div>' +
+      '<button type="button" id="an-add-q" class="btn-secondary">＋ Add a question</button>' +
+      '<div class="form-actions"><button type="button" id="an-save" class="btn-primary">Save worksheet</button></div>' +
+      "</div>");
+    $("an-r-subject").addEventListener("change", () => { anDraft.overall.subject = $("an-r-subject").value; });
+    renderAnalyzerRows();
+    $("an-add-q").addEventListener("click", () => {
+      anDraft.attempts.push(makeAttempt("", anDraft.overall.subject));
+      renderAnalyzerRows();
+    });
+    $("an-save").addEventListener("click", saveAnalysis);
+  }
+
+  function renderAnalyzerRows() {
+    const wrap = $("an-rows");
+    if (!wrap) return;
+    if (!anDraft.attempts.length) {
+      wrap.innerHTML = '<p class="empty">No questions found. Tap “＋ Add a question” to record them by hand.</p>';
+      return;
+    }
+    wrap.innerHTML = anDraft.attempts.map((a, i) => {
+      const outcome = attemptOutcome(a);
+      const errOpts = ['<option value="">— what happened? (optional) —</option>'].concat(
+        AN_ERROR_CATEGORIES.map((c) => '<option value="' + c.key + '"' + (a.errorType === c.key ? " selected" : "") + ">" + esc(c.label) + "</option>")).join("");
+      const supOpts = ['<option value="">— support (optional) —</option>'].concat(
+        AN_SUPPORT_LEVELS.map((c) => '<option value="' + c.key + '"' + (a.supportLevel === c.key ? " selected" : "") + ">" + esc(c.label) + "</option>")).join("");
+      const showErr = outcome === "incorrect" || outcome === "partial";
+      return '<div class="an-row" data-idx="' + i + '">' +
+        '<textarea class="an-q-text" rows="2" placeholder="Question text">' + esc(a.questionText) + "</textarea>" +
+        '<div class="an-q-controls">' +
+        '<span class="an-marks"><input class="an-q-aw" type="number" min="0" step="0.5" placeholder="got" value="' + (a.marksAwarded == null ? "" : a.marksAwarded) + '" />/<input class="an-q-av" type="number" min="1" step="0.5" placeholder="max" value="' + (a.marksAvailable == null ? "" : a.marksAvailable) + '" /></span>' +
+        '<button type="button" class="an-tick" title="Full marks">✓</button>' +
+        '<button type="button" class="an-cross" title="No marks">✗</button>' +
+        '<span class="an-cx">Complexity <input class="an-q-cx" type="number" min="1" max="5" value="' + (a.complexity || 2) + '" /></span>' +
+        '<button type="button" class="an-q-del" aria-label="Remove">🗑</button>' +
+        "</div>" +
+        '<select class="an-q-err' + (showErr ? "" : " hidden") + '">' + errOpts + "</select>" +
+        '<select class="an-q-sup">' + supOpts + "</select>" +
+        '<label class="an-approve"><input type="checkbox" class="an-q-ok"' + (a.parentApproved ? " checked" : "") + "> Approved</label>" +
+        "</div>";
+    }).join("");
+    // Wire each row. Values write straight back into anDraft.attempts.
+    wrap.querySelectorAll(".an-row").forEach((row) => {
+      const i = Number(row.dataset.idx);
+      const a = anDraft.attempts[i];
+      row.querySelector(".an-q-text").addEventListener("input", (e) => {
+        a.questionText = e.target.value;
+        a.topic = guessTopic(a.questionText, anDraft.overall.subject);
+      });
+      const aw = row.querySelector(".an-q-aw"), av = row.querySelector(".an-q-av");
+      const syncMarks = () => {
+        a.marksAwarded = aw.value === "" ? null : Number(aw.value);
+        a.marksAvailable = av.value === "" ? null : Number(av.value);
+        renderAnalyzerRows();
+      };
+      aw.addEventListener("change", syncMarks);
+      av.addEventListener("change", syncMarks);
+      row.querySelector(".an-tick").addEventListener("click", () => {
+        const max = a.marksAvailable || 1; a.marksAvailable = max; a.marksAwarded = max; renderAnalyzerRows();
+      });
+      row.querySelector(".an-cross").addEventListener("click", () => {
+        a.marksAvailable = a.marksAvailable || 1; a.marksAwarded = 0; renderAnalyzerRows();
+      });
+      row.querySelector(".an-q-cx").addEventListener("change", (e) => { a.complexity = Math.max(1, Math.min(5, Number(e.target.value) || 2)); });
+      row.querySelector(".an-q-err").addEventListener("change", (e) => { a.errorType = e.target.value; });
+      row.querySelector(".an-q-sup").addEventListener("change", (e) => { a.supportLevel = e.target.value; });
+      row.querySelector(".an-q-ok").addEventListener("change", (e) => { a.parentApproved = e.target.checked; a.needsReview = !e.target.checked; });
+      row.querySelector(".an-q-del").addEventListener("click", () => { anDraft.attempts.splice(i, 1); renderAnalyzerRows(); });
+    });
+  }
+
+  async function saveAnalysis() {
+    if (!anDraft) return;
+    const attempts = anDraft.attempts.filter((a) => (a.questionText || "").trim() || a.marksAwarded != null);
+    // Compute overall from marked attempts only.
+    const marked = attempts.filter((a) => a.marksAvailable != null && a.marksAvailable > 0);
+    let score = null;
+    if (marked.length) {
+      const got = marked.reduce((s, a) => s + (a.marksAwarded || 0), 0);
+      const max = marked.reduce((s, a) => s + (a.marksAvailable || 0), 0);
+      score = max > 0 ? Math.round((got / max) * 100) : null;
+    }
+    const cx = attempts.filter((a) => a.complexity);
+    const avgComplexity = cx.length ? Math.round((cx.reduce((s, a) => s + a.complexity, 0) / cx.length) * 10) / 10 : null;
+    const record = {
+      source: anDraft.source || "worksheet",
+      mode: "local",
+      blobId: anDraft.blobId || null,
+      overall: { subject: anDraft.overall.subject, score: score, avgComplexity: avgComplexity },
+      attempts: attempts,
+    };
+    await EduStore.addAnalysis(record);
+    anDraft = null;
+    closeModal();
+    renderAnalyzer();
+  }
+
+  async function renderAnalyzerList() {
+    const list = $("an-list");
+    if (!list) return;
+    const rows = await EduStore.getAnalyses();
+    if (!rows.length) {
+      list.innerHTML = '<p class="empty">No worksheets yet — tap “📸 Scan a worksheet” to add the first one. 🌟</p>';
+      return;
+    }
+    list.innerHTML = "";
+    for (const r of rows) {
+      const row = document.createElement("div");
+      row.className = "an-card";
+      let thumb = '<div class="thumb"></div>';
+      if (r.blobId) {
+        const b = await EduStore.getBlob(r.blobId);
+        if (b && b.blob) thumb = '<img class="thumb" src="' + trackURL(URL.createObjectURL(b.blob)) + '" alt="worksheet" />';
+      }
+      const subj = SUBJECT_LABEL[r.overall && r.overall.subject] || (r.overall && r.overall.subject) || "";
+      const scoreChip = (r.overall && r.overall.score != null) ? '<span class="score-badge">' + r.overall.score + "%</span>" : "";
+      const cxChip = (r.overall && r.overall.avgComplexity != null) ? '<span class="chip">~ complexity ' + r.overall.avgComplexity + "</span>" : "";
+      const approved = (r.attempts || []).filter((a) => a.parentApproved).length;
+      const okChip = approved ? '<span class="chip an-ok">✓ ' + approved + " approved</span>" : "";
+      const date = new Date(r.createdAt || Date.now()).toISOString().slice(0, 10);
+      row.innerHTML = thumb +
+        '<div class="entry-body"><div class="entry-top">' +
+        '<span class="entry-subj">' + esc(subj) + "</span>" +
+        '<span class="entry-date">' + esc(date) + "</span>" + scoreChip + "</div>" +
+        '<div class="an-chips">' + cxChip + okChip + '<span class="chip">' + (r.attempts || []).length + " questions</span></div>" +
+        "</div>" +
+        '<button class="entry-del" aria-label="Delete">🗑</button>';
+      row.querySelector(".entry-del").addEventListener("click", async () => {
+        if (!confirm("Delete this worksheet?")) return;
+        await EduStore.deleteAnalysis(r.id);
+        renderAnalyzer();
+      });
+      list.appendChild(row);
+    }
+  }
+
+  // ---- local insights (offline, evidence-only; only APPROVED attempts count) ----
+  // These are "your recorded results, summarised" — NOT AI analysis. Every string
+  // is count/time-bounded and free of deficit / identity / destiny language.
+  async function renderAnalyzerInsights() {
+    const el = $("an-insights");
+    if (!el) return;
+    const rows = await EduStore.getAnalyses();
+    const approved = [];
+    rows.forEach((r) => (r.attempts || []).forEach((a) => { if (a.parentApproved) approved.push(Object.assign({ _subject: r.overall && r.overall.subject }, a)); }));
+    if (!approved.length) {
+      el.innerHTML = '<div class="card an-insights"><p class="hint">Once you approve a few questions, a summary of your recorded results appears here. 🌱</p></div>';
+      return;
+    }
+    const lines = [];
+    // Per-topic "doing well / worth more practice" (partial-mark aware).
+    const byTopic = {};
+    approved.forEach((a) => {
+      const key = a.topic || "general";
+      const o = byTopic[key] || (byTopic[key] = { got: 0, max: 0, n: 0 });
+      if (a.marksAvailable > 0) { o.got += a.marksAwarded || 0; o.max += a.marksAvailable; }
+      o.n += 1;
+    });
+    Object.keys(byTopic).forEach((topic) => {
+      const o = byTopic[topic];
+      if (o.max <= 0) return;
+      const pct = Math.round((o.got / o.max) * 100);
+      const label = topic === "general" ? "these questions" : topic;
+      if (pct >= 80) lines.push("You're doing well on " + esc(label) + " — " + pct + "% recorded so far. 🌟");
+      else lines.push(esc(label.charAt(0).toUpperCase() + label.slice(1)) + " is worth a little more practice (" + pct + "% recorded). 💪");
+    });
+    // Complexity trend across worksheets (labelled "estimated").
+    const withCx = rows.filter((r) => r.overall && r.overall.avgComplexity != null)
+      .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)).map((r) => r.overall.avgComplexity);
+    let spark = "";
+    if (withCx.length >= 2) {
+      const first = withCx[0], last = withCx[withCx.length - 1];
+      const dir = last > first ? "rising" : last < first ? "easing" : "steady";
+      spark = '<p class="hint">Estimated challenge level is <b>' + dir + "</b> across " + withCx.length + " worksheets (" + first + " → " + last + "). 📈</p>";
+    }
+    // Optional error-category note (evidence only).
+    const errCounts = {};
+    approved.forEach((a) => { if (a.errorType) errCounts[a.errorType] = (errCounts[a.errorType] || 0) + 1; });
+    const topErr = Object.keys(errCounts).sort((x, y) => errCounts[y] - errCounts[x])[0];
+    if (topErr) {
+      const lbl = (AN_ERROR_CATEGORIES.find((c) => c.key === topErr) || {}).label || topErr;
+      lines.push("Most noted so far: “" + esc(lbl) + "” (" + errCounts[topErr] + "). Something to chat about together. 💬");
+    }
+    // School evidence echo (record + show only; read-only, caveated — §6b).
+    let evidence = "";
+    const mockEvidence = rows.filter((r) => r.source === "mock" && (r.attempts || []).some((a) => a.parentApproved)).length;
+    if (mockEvidence) {
+      evidence = '<p class="hint">📎 ' + mockEvidence + " approved mock worksheet" + (mockEvidence === 1 ? "" : "s") +
+        " recorded as evidence. This is a record only — school readiness still comes from your Progress page.</p>";
+    }
+    el.innerHTML = '<div class="card an-insights"><h3>Your recorded results, summarised</h3>' +
+      "<ul>" + lines.map((l) => "<li>" + l + "</li>").join("") + "</ul>" + spark + evidence + "</div>";
+  }
+  // ========== END HOMEWORK ANALYZER ==========
 
   // ============ SETTINGS ============
   function renderSettings() {
