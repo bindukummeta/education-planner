@@ -5,5 +5,8 @@
   "description": "Offline-first 11+ preparation planner with an AI study coach.",
   "engines": {
     "node": ">=18"
+  },
+  "scripts": {
+    "test": "node test/heuristics.test.js"
   }
 }
