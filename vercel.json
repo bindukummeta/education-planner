@@ -4,6 +4,9 @@
   "functions": {
     "api/coach.js": {
       "maxDuration": 10
+    },
+    "api/analyse-homework.js": {
+      "maxDuration": 30
     }
   },
   "headers": [

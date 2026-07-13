@@ -1845,9 +1845,115 @@
     return enhancedAiProvider(image, options);
   }
 
-  // Mode B — not implemented in v1. Guarded stub so the seam is future-proof.
-  async function enhancedAiProvider() {
-    throw new Error("Enhanced AI not enabled");
+  // Client-side language guard (defense-in-depth on top of the system prompt).
+  // If any deficit / fixed-ability word slips through, replace the whole summary
+  // with a neutral, encouraging fallback so it never reaches the parent.
+  const AI_BANNED = [
+    // deficit
+    "weak", "weakest", "worst", "bad", "poor", "behind", "lazy", "failing", "fail",
+    "stupid", "dumb", "slow",
+    // identity / fixed-ability
+    "genius", "gifted", "talented",
+  ];
+  function softenSummary(text) {
+    if (!text) return "";
+    const lower = String(text).toLowerCase();
+    const hit = AI_BANNED.some((w) => new RegExp("\\b" + w + "\\b").test(lower));
+    return hit ? "A good one to practise again together." : text;
+  }
+
+  // Map one AI-suggested attempt (§4 response) onto the existing QuestionAttempt
+  // shape. Starts from makeAttempt (defaults + guessTopic + estimateComplexity),
+  // then overlays AI fields. parentApproved ALWAYS starts false.
+  function mapAiAttempt(ai, subject) {
+    ai = ai || {};
+    const a = makeAttempt(ai.questionText || "", subject);
+    if (typeof ai.marksAwarded === "number" || typeof ai.marksAvailable === "number") {
+      a.marksAwarded = typeof ai.marksAwarded === "number" ? ai.marksAwarded : null;
+      a.marksAvailable = typeof ai.marksAvailable === "number" ? ai.marksAvailable : null;
+    } else {
+      switch (ai.correctness) {
+        case "correct":   a.marksAwarded = 1; a.marksAvailable = 1; break;
+        case "incorrect": a.marksAwarded = 0; a.marksAvailable = 1; break;
+        case "partial":   /* leave null; parent enters */ break;
+        default:          a.marksAwarded = null; a.marksAvailable = null; // unclear
+      }
+    }
+    const knownErr = AN_ERROR_CATEGORIES.some((c) => c.key === ai.errorType);
+    a.errorType = knownErr ? ai.errorType : "";
+    if (ai.subskill) a.subskill = ai.subskill;
+    if (ai.topic) a.topic = ai.topic; // else keep guessTopic default
+    a.studentAnswer = ai.studentAnswer || "";
+    a.expectedAnswer = ai.expectedAnswer || "";
+    a.confidence = (typeof ai.confidence === "number") ? ai.confidence : null;
+    a.needsReview = (ai.correctness === "unclear") ? true : (ai.needsReview !== false);
+    a.reasoningSummary = softenSummary(ai.reasoningSummary || "");
+    a.parentApproved = false; // always
+    return a;
+  }
+
+  // Mode B — opt-in cloud Vision analysis (Anthropic via /api/analyse-homework).
+  // Gated by the settings master switch AND per-capture consent. Never writes to
+  // storage — capture/review/save own persistence, exactly like local mode.
+  async function enhancedAiProvider(image, options) {
+    options = options || {};
+    const subject = options.subject || "maths";
+    // (a) consent gate: master switch ON + per-session consent
+    const enabled = await EduStore.getMeta("analyzer.enhancedAi.enabled");
+    if (enabled !== true && enabled !== "true") {
+      throw new Error("Enhanced AI is turned off. You can turn it on in Settings.");
+    }
+    if (options.consent !== true) {
+      throw new Error("Please confirm the consent box to use Enhanced AI.");
+    }
+    // (b) Blob -> base64 (strip data: prefix); capture mediaType
+    const mediaType = (image && image.type) || "image/jpeg";
+    const dataUrl = await new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(fr.result);
+      fr.onerror = () => reject(new Error("Could not read the photo."));
+      fr.readAsDataURL(image);
+    });
+    const base64 = String(dataUrl).split(",")[1] || "";
+    if (options.onProgress) options.onProgress(0.2);
+    // (c) POST with AbortController timeout (~30s)
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 30000);
+    let resp;
+    try {
+      resp = await fetch("/api/analyse-homework", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ image: { mediaType: mediaType, data: base64 }, subject: subject }),
+        signal: options.signal || ctrl.signal,
+      });
+    } catch (e) {
+      clearTimeout(timer);
+      throw new Error("We couldn't reach the analysis service. Your photo is safe — you can review by hand.");
+    }
+    clearTimeout(timer);
+    if (options.onProgress) options.onProgress(0.8);
+    // (d) non-OK -> friendly error (caller keeps blobId; can fall back)
+    if (!resp.ok) {
+      throw new Error("The analysis didn't come back this time. Your photo is safe — you can review by hand.");
+    }
+    const api = await resp.json();
+    // (e) normalize into WorksheetAnalysis
+    const attempts = (api.attempts || []).map((ai) => mapAiAttempt(ai, subject));
+    if (options.onProgress) options.onProgress(1);
+    return {
+      source: options.source || "worksheet",
+      mode: "enhanced",
+      overall: {
+        subject: subject,
+        score: null,
+        avgComplexity: null,
+        reasoningSummary: (api.overall && softenSummary(api.overall.reasoningSummary || "")) || "",
+        provider: "anthropic",
+        aiConfidence: (api.overall && api.overall.confidence) != null ? api.overall.confidence : null,
+      },
+      attempts: attempts,
+    };
   }
 
   // Lazy-load the vendored Tesseract engine only on first use (keeps the rest of
@@ -1948,39 +2054,72 @@
     await renderAnalyzerList();
   }
 
-  // Capture: pick/scan a printed worksheet photo, confirm subject, run OCR.
-  function openAnalyzerCapture() {
+  // Capture: pick/scan a printed worksheet photo, confirm subject, run OCR (local)
+  // or opt-in cloud Vision analysis (enhanced, only when the master switch is ON).
+  async function openAnalyzerCapture() {
+    const masterOn = (await EduStore.getMeta("analyzer.enhancedAi.enabled")) === true;
     const subjOpts = SUBJECTS.map((s) =>
       '<option value="' + s + '"' + (s === "maths" ? " selected" : "") + ">" + esc(SUBJECT_LABEL[s]) + "</option>").join("");
+    const enhancedBlock = masterOn
+      ? '<label class="an-mode-pick"><input type="checkbox" id="an-enhanced"> ✨ Enhanced AI (beta)</label>' +
+        '<label class="an-consent hidden" id="an-consent-row"><input type="checkbox" id="an-consent"> I understand this photo will be sent securely for analysis.</label>'
+      : "";
     openModal("Scan a worksheet",
       '<form id="an-form" class="an-form">' +
       '<p class="hint">🔒 Private Scan reads the <b>printed questions</b> on the page. Your child\'s handwritten answers stay for you to mark with ✓ / part-marks / ✗ — the photo never leaves this device.</p>' +
       '<label>Subject<select id="an-subject">' + subjOpts + "</select></label>" +
       '<label>Worksheet photo<input type="file" id="an-image" accept="image/*" capture="environment" required></label>' +
+      enhancedBlock +
       '<div id="an-progress" class="an-progress hidden"><div class="an-bar"><span></span></div><span class="an-progress-txt">Reading the page…</span></div>' +
       '<div class="form-actions"><button type="submit" class="btn-primary">Scan</button>' +
       '<button type="button" id="an-manual" class="btn-secondary">Enter by hand instead</button></div>' +
       "</form>");
+    // Consent line is only meaningful when Enhanced AI is ticked.
+    if (masterOn) {
+      $("an-enhanced").addEventListener("change", (e) => {
+        $("an-consent-row").classList.toggle("hidden", !e.target.checked);
+        if (!e.target.checked) $("an-consent").checked = false;
+      });
+    }
     $("an-form").addEventListener("submit", async (e) => {
       e.preventDefault();
       const file = $("an-image").files[0];
       if (!file) return;
       const subject = $("an-subject").value;
+      const useEnhanced = masterOn && $("an-enhanced") && $("an-enhanced").checked === true;
+      const consent = !!(useEnhanced && $("an-consent") && $("an-consent").checked === true);
       const prog = $("an-progress");
       const bar = prog.querySelector(".an-bar span");
+      const txt = prog.querySelector(".an-progress-txt");
+      // Block before any network call if Enhanced is on but consent is not given.
+      if (useEnhanced && !consent) {
+        prog.classList.remove("hidden");
+        txt.textContent = "Please confirm the consent box to use Enhanced AI.";
+        return;
+      }
       prog.classList.remove("hidden");
+      txt.textContent = useEnhanced ? "Analysing the page…" : "Reading the page…";
+      // Compress → putBlob FIRST so the image survives any provider outcome.
       let blobId = null;
       let blob = file;
-      try { blob = await compressImage(file); blobId = await EduStore.putBlob(blob, "image/jpeg"); }
-      catch (_) { blobId = null; }
+      try {
+        blob = await compressImage(file, useEnhanced ? 1024 : 1600, useEnhanced ? 0.6 : 0.7);
+        blobId = await EduStore.putBlob(blob, "image/jpeg");
+      } catch (_) { blobId = null; }
       let analysis;
       try {
         analysis = await analyseWorksheet(blob, {
-          mode: "local", subject: subject,
+          mode: useEnhanced ? "enhanced" : "local", subject: subject, consent: consent,
           onProgress: (p) => { bar.style.width = Math.round((p || 0) * 100) + "%"; },
         });
-      } catch (_) {
-        analysis = { source: "worksheet", mode: "local", overall: { subject: subject, score: null, avgComplexity: null }, attempts: [] };
+      } catch (err) {
+        // Keep blobId; show a friendly message; fall back to an empty draft so the
+        // parent can review by hand. The image is never lost.
+        txt.textContent = (err && err.message) || "The analysis didn't come back. Your photo is safe — you can review by hand.";
+        analysis = {
+          source: "worksheet", mode: useEnhanced ? "enhanced" : "local",
+          overall: { subject: subject, score: null, avgComplexity: null }, attempts: [],
+        };
       }
       anDraft = Object.assign({ blobId: blobId }, analysis);
       openAnalyzerReview();
@@ -1998,12 +2137,22 @@
     if (!anDraft) return;
     const subjOpts = SUBJECTS.map((s) =>
       '<option value="' + s + '"' + (s === anDraft.overall.subject ? " selected" : "") + ">" + esc(SUBJECT_LABEL[s]) + "</option>").join("");
+    // Delete-after-approval only applies to the cloud (enhanced) path; local
+    // photos are already on-device only, so they are kept and no option is shown.
+    const isEnhanced = anDraft.mode === "enhanced" && anDraft.blobId;
+    const keepBlock = isEnhanced
+      ? '<label class="an-keep"><input type="checkbox" id="an-keep-image"> Keep photo on device (otherwise it is deleted after you approve).</label>'
+      : "";
+    const overallNote = (anDraft.overall && anDraft.overall.reasoningSummary)
+      ? '<p class="an-ai-note">' + esc(anDraft.overall.reasoningSummary) + "</p>" : "";
     openModal("Review worksheet",
       '<div class="an-review">' +
       '<label>Subject<select id="an-r-subject">' + subjOpts + "</select></label>" +
       '<p class="hint">Tick each question with ✓ (full), part marks, or ✗ (none). Complexity is an editable estimate.</p>' +
+      overallNote +
       '<div id="an-rows"></div>' +
       '<button type="button" id="an-add-q" class="btn-secondary">＋ Add a question</button>' +
+      keepBlock +
       '<div class="form-actions"><button type="button" id="an-save" class="btn-primary">Save worksheet</button></div>' +
       "</div>");
     $("an-r-subject").addEventListener("change", () => { anDraft.overall.subject = $("an-r-subject").value; });
@@ -2022,6 +2171,7 @@
       wrap.innerHTML = '<p class="empty">No questions found. Tap “＋ Add a question” to record them by hand.</p>';
       return;
     }
+    const enhanced = anDraft.mode === "enhanced";
     wrap.innerHTML = anDraft.attempts.map((a, i) => {
       const outcome = attemptOutcome(a);
       const errOpts = ['<option value="">— what happened? (optional) —</option>'].concat(
@@ -2029,8 +2179,19 @@
       const supOpts = ['<option value="">— support (optional) —</option>'].concat(
         AN_SUPPORT_LEVELS.map((c) => '<option value="' + c.key + '"' + (a.supportLevel === c.key ? " selected" : "") + ">" + esc(c.label) + "</option>")).join("");
       const showErr = outcome === "incorrect" || outcome === "partial";
-      return '<div class="an-row" data-idx="' + i + '">' +
-        '<textarea class="an-q-text" rows="2" placeholder="Question text">' + esc(a.questionText) + "</textarea>" +
+      const needsFlag = a.needsReview === true || (a.confidence != null && a.confidence < 0.6);
+      const badge = needsFlag ? '<span class="an-badge">Please check</span>' : "";
+      const aiNote = a.reasoningSummary ? '<p class="an-ai-note">' + esc(a.reasoningSummary) + "</p>" : "";
+      const answers = enhanced
+        ? '<div class="an-answers">' +
+          '<label class="an-answer">Their answer<input class="an-q-sa" type="text" value="' + esc(a.studentAnswer || "") + '" /></label>' +
+          '<label class="an-answer">Expected<input class="an-q-ea" type="text" value="' + esc(a.expectedAnswer || "") + '" /></label>' +
+          "</div>"
+        : "";
+      return '<div class="an-row' + (needsFlag ? " an-needs-review" : "") + '" data-idx="' + i + '">' +
+        '<div class="an-q-head"><textarea class="an-q-text" rows="2" placeholder="Question text">' + esc(a.questionText) + "</textarea>" + badge + "</div>" +
+        aiNote +
+        answers +
         '<div class="an-q-controls">' +
         '<span class="an-marks"><input class="an-q-aw" type="number" min="0" step="0.5" placeholder="got" value="' + (a.marksAwarded == null ? "" : a.marksAwarded) + '" />/<input class="an-q-av" type="number" min="1" step="0.5" placeholder="max" value="' + (a.marksAvailable == null ? "" : a.marksAvailable) + '" /></span>' +
         '<button type="button" class="an-tick" title="Full marks">✓</button>' +
@@ -2043,6 +2204,8 @@
         '<label class="an-approve"><input type="checkbox" class="an-q-ok"' + (a.parentApproved ? " checked" : "") + "> Approved</label>" +
         "</div>";
     }).join("");
+    // Mark an AI-prefilled attempt as parent-corrected when the parent edits it.
+    const markCorrected = (a) => { if (enhanced) a.parentCorrected = true; };
     // Wire each row. Values write straight back into anDraft.attempts.
     wrap.querySelectorAll(".an-row").forEach((row) => {
       const i = Number(row.dataset.idx);
@@ -2050,24 +2213,29 @@
       row.querySelector(".an-q-text").addEventListener("input", (e) => {
         a.questionText = e.target.value;
         a.topic = guessTopic(a.questionText, anDraft.overall.subject);
+        markCorrected(a);
       });
+      const sa = row.querySelector(".an-q-sa"), ea = row.querySelector(".an-q-ea");
+      if (sa) sa.addEventListener("input", (e) => { a.studentAnswer = e.target.value; markCorrected(a); });
+      if (ea) ea.addEventListener("input", (e) => { a.expectedAnswer = e.target.value; markCorrected(a); });
       const aw = row.querySelector(".an-q-aw"), av = row.querySelector(".an-q-av");
       const syncMarks = () => {
         a.marksAwarded = aw.value === "" ? null : Number(aw.value);
         a.marksAvailable = av.value === "" ? null : Number(av.value);
+        markCorrected(a);
         renderAnalyzerRows();
       };
       aw.addEventListener("change", syncMarks);
       av.addEventListener("change", syncMarks);
       row.querySelector(".an-tick").addEventListener("click", () => {
-        const max = a.marksAvailable || 1; a.marksAvailable = max; a.marksAwarded = max; renderAnalyzerRows();
+        const max = a.marksAvailable || 1; a.marksAvailable = max; a.marksAwarded = max; markCorrected(a); renderAnalyzerRows();
       });
       row.querySelector(".an-cross").addEventListener("click", () => {
-        a.marksAvailable = a.marksAvailable || 1; a.marksAwarded = 0; renderAnalyzerRows();
+        a.marksAvailable = a.marksAvailable || 1; a.marksAwarded = 0; markCorrected(a); renderAnalyzerRows();
       });
-      row.querySelector(".an-q-cx").addEventListener("change", (e) => { a.complexity = Math.max(1, Math.min(5, Number(e.target.value) || 2)); });
-      row.querySelector(".an-q-err").addEventListener("change", (e) => { a.errorType = e.target.value; });
-      row.querySelector(".an-q-sup").addEventListener("change", (e) => { a.supportLevel = e.target.value; });
+      row.querySelector(".an-q-cx").addEventListener("change", (e) => { a.complexity = Math.max(1, Math.min(5, Number(e.target.value) || 2)); markCorrected(a); });
+      row.querySelector(".an-q-err").addEventListener("change", (e) => { a.errorType = e.target.value; markCorrected(a); });
+      row.querySelector(".an-q-sup").addEventListener("change", (e) => { a.supportLevel = e.target.value; markCorrected(a); });
       row.querySelector(".an-q-ok").addEventListener("change", (e) => { a.parentApproved = e.target.checked; a.needsReview = !e.target.checked; });
       row.querySelector(".an-q-del").addEventListener("click", () => { anDraft.attempts.splice(i, 1); renderAnalyzerRows(); });
     });
@@ -2086,14 +2254,35 @@
     }
     const cx = attempts.filter((a) => a.complexity);
     const avgComplexity = cx.length ? Math.round((cx.reduce((s, a) => s + a.complexity, 0) / cx.length) * 10) / 10 : null;
+    // AI metadata is additive. Enhanced captures may delete the on-device photo
+    // after approval; local captures always keep the photo (no cloud copy exists).
+    const enhanced = anDraft.mode === "enhanced";
+    const keep = $("an-keep-image") ? $("an-keep-image").checked === true : !enhanced;
     const record = {
       source: anDraft.source || "worksheet",
-      mode: "local",
+      mode: anDraft.mode || "local",
+      provider: enhanced ? "anthropic" : null,
+      aiConfidence: (anDraft.overall && anDraft.overall.aiConfidence) != null ? anDraft.overall.aiConfidence : null,
+      imageDeletable: enhanced ? !keep : false,
       blobId: anDraft.blobId || null,
-      overall: { subject: anDraft.overall.subject, score: score, avgComplexity: avgComplexity },
+      overall: {
+        subject: anDraft.overall.subject,
+        score: score,
+        avgComplexity: avgComplexity,
+        reasoningSummary: (anDraft.overall && anDraft.overall.reasoningSummary) || "",
+      },
       attempts: attempts,
     };
-    await EduStore.addAnalysis(record);
+    // Delete-after-approval ordering: save the record with blobId nulled FIRST,
+    // then delete the blob, so a failed delete never leaves a dangling pointer.
+    if (enhanced && !keep && record.blobId) {
+      const oldBlobId = record.blobId;
+      record.blobId = null;
+      await EduStore.addAnalysis(record);
+      await EduStore.deleteBlob(oldBlobId);
+    } else {
+      await EduStore.addAnalysis(record);
+    }
     anDraft = null;
     closeModal();
     renderAnalyzer();
@@ -2198,9 +2387,20 @@
   // ========== END HOMEWORK ANALYZER ==========
 
   // ============ SETTINGS ============
-  function renderSettings() {
+  async function renderSettings() {
     const el = $("app-version");
     if (el) el.textContent = "Education Planner · offline-first PWA";
+    // Enhanced AI master switch (default OFF), persisted in EduStore meta.
+    const toggle = $("set-enhanced-ai");
+    if (toggle) {
+      toggle.checked = (await EduStore.getMeta("analyzer.enhancedAi.enabled")) === true;
+      if (!toggle.__wired) {
+        toggle.__wired = true;
+        toggle.addEventListener("change", async (e) => {
+          await EduStore.setMeta("analyzer.enhancedAi.enabled", e.target.checked === true);
+        });
+      }
+    }
   }
 
   // ============ INIT ============

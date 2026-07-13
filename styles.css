@@ -626,3 +626,15 @@ h2 { font-size: 18px; font-weight: 800; letter-spacing: -0.01em; margin: 0 0 14p
 .an-row select { width: 100%; margin-bottom: 8px; }
 .an-approve { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; }
 .an-approve input { width: 18px; height: 18px; }
+/* Enhanced AI (opt-in) review affordances */
+.an-needs-review { border-left: 3px solid var(--warn, #e08a00); background: var(--warn-bg, #fff8ec); }
+.an-badge { display: inline-block; font-size: .75rem; padding: .1rem .45rem; border-radius: 999px;
+            background: var(--warn, #e08a00); color: #fff; margin-left: .4rem; }
+.an-ai-note { font-size: .85rem; color: var(--muted, #666); margin-top: .25rem; font-style: italic; }
+.an-q-head { display: flex; align-items: flex-start; gap: 6px; }
+.an-answers { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+.an-answer { flex: 1; min-width: 120px; font-size: 12px; color: var(--muted); }
+.an-answer input { width: 100%; }
+.an-consent, .an-keep { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; margin-bottom: 10px; }
+.an-mode-pick { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; margin-bottom: 10px; }
+.an-ai-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 700; }

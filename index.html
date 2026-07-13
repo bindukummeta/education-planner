@@ -354,7 +354,6 @@
         <p class="hint">Take a photo of a printed worksheet. Everything stays on this device — nothing is uploaded.</p>
         <div class="an-mode-row">
           <span class="an-mode an-mode-on">🔒 Private Scan Mode</span>
-          <label class="an-mode an-mode-off"><input type="checkbox" id="an-enhanced" disabled> ✨ Enhanced AI <span class="an-soon">(coming soon)</span></label>
         </div>
       </div>
       <div class="view-actions">
@@ -403,6 +402,11 @@
           <button type="button" id="reset-seed" class="btn-secondary">Reset to preset schools</button>
           <p class="hint" id="reseed-hint">Replaces the school list with the built-in presets (Tiffin, Nonsuch, Henrietta Barnett). Your daily log and photos are kept.</p>
         </div>
+      </div>
+      <div class="card">
+        <h2>Analysis</h2>
+        <label class="an-ai-toggle"><input type="checkbox" id="set-enhanced-ai"> ✨ Enhanced AI analysis (beta)</label>
+        <p class="hint" id="set-enhanced-ai-hint">When on, a photo of a worksheet is sent securely to our AI provider (Anthropic) for analysis. Results are <b>suggestions only</b> that you review and approve. Photos are deleted from this device after you approve, unless you choose to keep them. Leave this off to use Private Scan Mode, which works fully offline. Default: <b>off</b>.</p>
       </div>
       <div class="card">
         <h2>Backup</h2>
