@@ -2147,8 +2147,15 @@
       ? '<p class="an-ai-note">' + esc(anDraft.overall.reasoningSummary) + "</p>" : "";
     openModal("Review worksheet",
       '<div class="an-review">' +
+      '<div class="an-intro">' +
+      "<p><strong>Here's what the scan found.</strong> Quickly check it, then save — it takes about a minute.</p>" +
+      "<ol>" +
+      "<li><strong>Check the question text</strong> — fix any words the scan got wrong.</li>" +
+      "<li><strong>Mark it</strong> — tap ✓ if she got it right, ✗ if not, or type the marks (e.g. 2 out of 3).</li>" +
+      '<li><strong>Save</strong> — that\'s it. Adding extra detail is optional.</li>' +
+      "</ol>" +
+      "</div>" +
       '<label>Subject<select id="an-r-subject">' + subjOpts + "</select></label>" +
-      '<p class="hint">Tick each question with ✓ (full), part marks, or ✗ (none). Complexity is an editable estimate.</p>' +
       overallNote +
       '<div id="an-rows"></div>' +
       '<button type="button" id="an-add-q" class="btn-secondary">＋ Add a question</button>' +
@@ -2189,19 +2196,28 @@
           "</div>"
         : "";
       return '<div class="an-row' + (needsFlag ? " an-needs-review" : "") + '" data-idx="' + i + '">' +
-        '<div class="an-q-head"><textarea class="an-q-text" rows="2" placeholder="Question text">' + esc(a.questionText) + "</textarea>" + badge + "</div>" +
+        '<div class="an-q-head">' +
+        '<label class="an-q-label">Question ' + (i + 1) +
+        '<textarea class="an-q-text" rows="2" placeholder="Type the question here">' + esc(a.questionText) + "</textarea></label>" +
+        badge +
+        '<button type="button" class="an-q-del" aria-label="Remove this question" title="Remove">🗑</button>' +
+        "</div>" +
         aiNote +
         answers +
         '<div class="an-q-controls">' +
-        '<span class="an-marks"><input class="an-q-aw" type="number" min="0" step="0.5" placeholder="got" value="' + (a.marksAwarded == null ? "" : a.marksAwarded) + '" />/<input class="an-q-av" type="number" min="1" step="0.5" placeholder="max" value="' + (a.marksAvailable == null ? "" : a.marksAvailable) + '" /></span>' +
-        '<button type="button" class="an-tick" title="Full marks">✓</button>' +
-        '<button type="button" class="an-cross" title="No marks">✗</button>' +
-        '<span class="an-cx">Complexity <input class="an-q-cx" type="number" min="1" max="5" value="' + (a.complexity || 2) + '" /></span>' +
-        '<button type="button" class="an-q-del" aria-label="Remove">🗑</button>' +
+        '<span class="an-mark-label">How did she do?</span>' +
+        '<button type="button" class="an-tick" title="Got it right (full marks)">✓ Right</button>' +
+        '<button type="button" class="an-cross" title="Got it wrong (no marks)">✗ Wrong</button>' +
+        '<span class="an-marks">or marks: <input class="an-q-aw" type="number" min="0" step="0.5" placeholder="got" value="' + (a.marksAwarded == null ? "" : a.marksAwarded) + '" /> out of <input class="an-q-av" type="number" min="1" step="0.5" placeholder="max" value="' + (a.marksAvailable == null ? "" : a.marksAvailable) + '" /></span>' +
         "</div>" +
-        '<select class="an-q-err' + (showErr ? "" : " hidden") + '">' + errOpts + "</select>" +
-        '<select class="an-q-sup">' + supOpts + "</select>" +
-        '<label class="an-approve"><input type="checkbox" class="an-q-ok"' + (a.parentApproved ? " checked" : "") + "> Approved</label>" +
+        '<details class="an-detail">' +
+        "<summary>Add detail (optional)</summary>" +
+        '<label class="an-detail-field an-q-err-wrap' + (showErr ? "" : " hidden") + '">What happened?' +
+        '<select class="an-q-err">' + errOpts + "</select></label>" +
+        '<label class="an-detail-field">How much help did she need?<select class="an-q-sup">' + supOpts + "</select></label>" +
+        '<label class="an-detail-field an-cx">How tricky was it? (1 = easy, 5 = hard)<input class="an-q-cx" type="number" min="1" max="5" value="' + (a.complexity || 2) + '" /></label>' +
+        "</details>" +
+        '<label class="an-approve"><input type="checkbox" class="an-q-ok"' + (a.parentApproved ? " checked" : "") + "> I've checked this one</label>" +
         "</div>";
     }).join("");
     // Mark an AI-prefilled attempt as parent-corrected when the parent edits it.
