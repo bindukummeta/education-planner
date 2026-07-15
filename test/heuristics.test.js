@@ -1,6 +1,7 @@
 /*
  * Permanent test harness for the Homework Analyzer's pure heuristics:
- *   estimateComplexity(text, subject), guessTopic(text, subject), attemptOutcome(a).
+ *   estimateComplexity(text, subject), guessTopic(text, subject),
+ *   splitQuestions(text), attemptOutcome(a).
  *
  * app.js is a browser IIFE, so these functions aren't exported. Rather than
  * duplicate them (and let a copy drift from the shipped code), we slice the
@@ -33,18 +34,27 @@ const block = appSrc.slice(startIdx, bodyClose + "\n  }".length);
 const sandbox = {};
 vm.createContext(sandbox);
 vm.runInContext(
-  block + "\n;this.__fns = { estimateComplexity, guessTopic, attemptOutcome };",
+  block + "\n;this.__fns = { estimateComplexity, guessTopic, splitQuestions, attemptOutcome };",
   sandbox,
   { filename: "app.js#heuristics" }
 );
-const { estimateComplexity, guessTopic, attemptOutcome } = sandbox.__fns;
+const { estimateComplexity, guessTopic, splitQuestions, attemptOutcome } = sandbox.__fns;
 assert.strictEqual(typeof estimateComplexity, "function", "estimateComplexity not extracted");
 assert.strictEqual(typeof guessTopic, "function", "guessTopic not extracted");
+assert.strictEqual(typeof splitQuestions, "function", "splitQuestions not extracted");
 assert.strictEqual(typeof attemptOutcome, "function", "attemptOutcome not extracted");
 
 let passed = 0;
 function check(desc, actual, expected) {
   assert.deepStrictEqual(actual, expected, desc + " (got " + JSON.stringify(actual) + ")");
+  passed++;
+}
+// splitQuestions returns arrays created inside the vm sandbox (a different
+// realm), so deepStrictEqual's cross-realm prototype check fails. Compare by
+// value via JSON instead — sufficient for arrays of plain strings.
+function checkList(desc, actual, expected) {
+  assert.strictEqual(JSON.stringify(actual), JSON.stringify(expected),
+    desc + " (got " + JSON.stringify(actual) + ")");
   passed++;
 }
 
@@ -81,6 +91,30 @@ check("unknown maths text returns empty string", guessTopic("hello there", "math
 check("subject with no keyword table returns empty string",
   guessTopic("Add these numbers", "english"), "");
 check("empty text returns empty string", guessTopic("", "maths"), "");
+
+// ---- splitQuestions: keep real questions, drop headings / furniture ----
+checkList("empty text → no questions", splitQuestions(""), []);
+checkList("numbered items are kept and markers stripped",
+  splitQuestions("1. What is 2 + 2?\n2) Find 10% of 50"),
+  ["What is 2 + 2?", "Find 10% of 50"]);
+checkList("headings and name/date fields are dropped",
+  splitQuestions("Maths Worksheet\nName: _____\nDate: _____\n1. What is 2 + 2?"),
+  ["What is 2 + 2?"]);
+checkList("section headers and page numbers are dropped",
+  splitQuestions("Section A\n1. Solve 5 + 3\nPage 2"),
+  ["Solve 5 + 3"]);
+checkList("wrapped continuation lines join their numbered item",
+  splitQuestions("1. A train leaves at 9am and travels\nfor 3 hours. When does it arrive?"),
+  ["A train leaves at 9am and travels for 3 hours. When does it arrive?"]);
+checkList("Year label and bare score are dropped",
+  splitQuestions("Year 5\nScore: 8/10\n1. Round 47 to the nearest 10"),
+  ["Round 47 to the nearest 10"]);
+checkList("un-numbered questions kept via question signals",
+  splitQuestions("Multiplication practice\nWhat is 6 x 7?\nCalculate 8 x 9"),
+  ["What is 6 x 7?", "Calculate 8 x 9"]);
+checkList("un-numbered plain heading with no signal is dropped",
+  splitQuestions("Fractions\nWrite each fraction in its simplest form"),
+  ["Write each fraction in its simplest form"]);
 
 // ---- attemptOutcome: marks → outcome mapping ----
 check("full marks → correct", attemptOutcome({ marksAwarded: 2, marksAvailable: 2 }), "correct");

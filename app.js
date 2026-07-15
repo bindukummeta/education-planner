@@ -2004,13 +2004,92 @@
     };
   }
 
-  // Split OCR text into candidate questions: one numbered item / non-empty line =
-  // one question. Deliberately simple for the one-page worksheet pilot.
+  // Regex for an explicit question marker at the start of a line: "1.", "2)",
+  // "3]", "a.", "b)", or a bullet. Capturing group 1 is the marker text.
+  const AN_Q_MARKER = /^\s*(\d{1,3}[\).\]]|[a-z][\).\]]|[-•*])\s+/i;
+  // Lines that are worksheet furniture, not questions: name/date/class fields,
+  // section/page headers, "Year 5", "Worksheet", a lone score like "8/10", or a
+  // standalone number (page number). Deterministic and easy to extend.
+  const AN_NOISE = [
+    /^\s*(name|date|class|teacher|pupil|student|score|mark|marks|total|subject|topic|set)\s*[:\-]/i,
+    /^\s*(section|part|page|unit|lesson|exercise|activity|worksheet|homework|sheet|paper)\b/i,
+    /^\s*year\s*\d+\b/i,
+    /^\s*\d+\s*\/\s*\d+\s*$/,           // bare "8/10" score
+    /^\s*[\d\.\)\]\-–—]+\s*$/,          // just numbers/punctuation (page no., stray marks)
+    /^\s*©/,
+  ];
+  // A line reads like a real question if it asks/instructs or carries maths.
+  const AN_QUESTION_HINT = [
+    /\?/,                                                     // ends with / contains a question
+    /\b(what|why|how|which|when|where|who|whose|find|work out|calculate|solve|explain|write|complete|circle|draw|show|list|name|give|estimate|round|convert|simplify|add|subtract|multiply|divide|order|compare|fill in|choose|match|underline|tick)\b/i,
+    /[+\-−×÷=]/,                                              // a maths operator / equation
+    /\b\d+\s*(cm|mm|m|km|kg|g|ml|l|%|p|£|\$)\b/i,             // quantity with a unit
+  ];
+
+  // Decide whether a single cleaned line (marker already stripped) looks like a
+  // real question rather than a heading or worksheet furniture.
+  function looksLikeQuestion(line, hadMarker) {
+    const t = line.trim();
+    if (t.length < 3) return false;
+    if (AN_NOISE.some((re) => re.test(t))) return false;
+    // A numbered/bulleted item is almost always a question on a worksheet.
+    if (hadMarker) return true;
+    // Otherwise require a positive question signal to avoid capturing headings.
+    if (AN_QUESTION_HINT.some((re) => re.test(t))) return true;
+    // A short line with no question signal and Title/UPPER case is a heading.
+    const words = t.split(/\s+/).filter(Boolean);
+    const looksTitle = words.length <= 6 && !/[.?!]$/.test(t) &&
+      words.every((w) => /^[A-Z0-9]/.test(w) || w.length <= 3);
+    if (looksTitle) return false;
+    // Fall back to keeping longer prose lines (likely a question without keywords).
+    return words.length >= 5;
+  }
+
+  // Split OCR text into candidate questions. Numbered/bulleted items anchor a
+  // question and absorb any following unnumbered "continuation" lines (wrapped
+  // question text). Headings, name/date fields, page numbers and other furniture
+  // are filtered out. Deterministic; same input → same output. When no explicit
+  // numbering is found we fall back to per-line question detection.
   function splitQuestions(text) {
-    return String(text || "")
-      .split(/\r?\n/)
-      .map((l) => l.replace(/^\s*(\d+[\).\]]|[a-z][\).\]]|[-•*])\s*/i, "").trim())
-      .filter((l) => l.length >= 2);
+    const rawLines = String(text || "").split(/\r?\n/);
+    const hasNumbering = rawLines.some((l) => AN_Q_MARKER.test(l));
+    if (hasNumbering) {
+      const items = [];
+      let current = null;
+      for (const raw of rawLines) {
+        const line = raw.trim();
+        if (!line) { current = null; continue; }
+        const m = raw.match(AN_Q_MARKER);
+        if (m) {
+          const body = raw.slice(m[0].length).trim();
+          current = { text: body, hadMarker: true };
+          items.push(current);
+        } else if (AN_NOISE.some((re) => re.test(line))) {
+          // Furniture line (page number, header, score) — ends the current
+          // question so it isn't absorbed as a continuation.
+          current = null;
+        } else if (current) {
+          // Continuation of the current question (wrapped line).
+          current.text = (current.text + " " + line).trim();
+        } else {
+          // Pre-amble prose before the first numbered item — keep if it reads
+          // like a question, otherwise treat as a heading and drop.
+          if (looksLikeQuestion(line, false)) items.push({ text: line, hadMarker: false });
+        }
+      }
+      return items
+        .filter((it) => looksLikeQuestion(it.text, it.hadMarker))
+        .map((it) => it.text)
+        .filter((t) => t.length >= 2);
+    }
+    // No explicit numbering: judge each non-empty line on its own merits.
+    return rawLines
+      .map((l) => {
+        const m = l.match(AN_Q_MARKER);
+        return { text: (m ? l.slice(m[0].length) : l).trim(), hadMarker: !!m };
+      })
+      .filter((it) => it.text.length >= 2 && looksLikeQuestion(it.text, it.hadMarker))
+      .map((it) => it.text);
   }
 
   function makeAttempt(text, subject) {
@@ -2068,7 +2147,8 @@
       '<form id="an-form" class="an-form">' +
       '<p class="hint">🔒 Private Scan reads the <b>printed questions</b> on the page. Your child\'s handwritten answers stay for you to mark with ✓ / part-marks / ✗ — the photo never leaves this device.</p>' +
       '<label>Subject<select id="an-subject">' + subjOpts + "</select></label>" +
-      '<label>Worksheet photo<input type="file" id="an-image" accept="image/*" capture="environment" required></label>' +
+      '<label>Worksheet photo<input type="file" id="an-image" accept="image/*" required>' +
+      '<span class="hint an-file-hint">Take a photo or choose one from your library.</span></label>' +
       enhancedBlock +
       '<div id="an-progress" class="an-progress hidden"><div class="an-bar"><span></span></div><span class="an-progress-txt">Reading the page…</span></div>' +
       '<div class="form-actions"><button type="submit" class="btn-primary">Scan</button>' +
@@ -2150,7 +2230,7 @@
       '<div class="an-intro">' +
       "<p><strong>Here's what the scan found.</strong> Quickly check it, then save — it takes about a minute.</p>" +
       "<ol>" +
-      "<li><strong>Check the question text</strong> — fix any words the scan got wrong.</li>" +
+      "<li><strong>Check the question text</strong> — fix any words the scan got wrong, and tap 🗑 to remove anything that isn't a question (like a title or your child's name).</li>" +
       "<li><strong>Mark it</strong> — tap ✓ if she got it right, ✗ if not, or type the marks (e.g. 2 out of 3).</li>" +
       '<li><strong>Save</strong> — that\'s it. Adding extra detail is optional.</li>' +
       "</ol>" +
