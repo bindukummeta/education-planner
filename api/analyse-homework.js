@@ -141,7 +141,7 @@ function normalizePayload(raw, model, subject) {
 module.exports = async (req, res) => {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
   const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return res.status(500).json({ error: "Server not configured" });
+  if (!apiKey) return res.status(500).json({ error: "Server is missing ANTHROPIC_API_KEY. Set it in Vercel env vars or .env.local." });
   const model = process.env.ANTHROPIC_VISION_MODEL || DEFAULT_MODEL;
 
   let body = req.body;
@@ -181,7 +181,16 @@ module.exports = async (req, res) => {
       })
     });
 
-    if (!upstream.ok) return res.status(502).json({ error: "Analysis service unavailable" });
+    if (!upstream.ok) {
+      // Surface the real upstream reason (like api/coach.js) so failures are
+      // diagnosable instead of a generic "unavailable".
+      let detail = "HTTP " + upstream.status;
+      try {
+        const errData = await upstream.json();
+        detail = (errData && errData.error && errData.error.message) || detail;
+      } catch (_) { /* keep HTTP status */ }
+      return res.status(502).json({ error: "Analysis service error: " + detail, status: upstream.status });
+    }
     const data = await upstream.json();
     const text = Array.isArray(data.content)
       ? data.content.filter(p => p && p.type === "text").map(p => p.text).join("")
@@ -191,10 +200,10 @@ module.exports = async (req, res) => {
       const cleaned = text.replace(/```json/gi, "").replace(/```/g, "").trim();
       parsed = JSON.parse(cleaned);
     } catch (e) {
-      return res.status(502).json({ error: "Could not read the analysis" });
+      return res.status(502).json({ error: "Could not read the analysis (invalid JSON from model)" });
     }
     return res.status(200).json(normalizePayload(parsed, model, subject));
   } catch (err) {
-    return res.status(500).json({ error: "Something went wrong analysing the photo" });
+    return res.status(500).json({ error: "Something went wrong analysing the photo: " + ((err && err.message) || String(err)) });
   }
 };

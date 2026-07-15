@@ -1933,9 +1933,14 @@
     }
     clearTimeout(timer);
     if (options.onProgress) options.onProgress(0.8);
-    // (d) non-OK -> friendly error (caller keeps blobId; can fall back)
+    // (d) non-OK -> surface the server's real reason so failures are diagnosable;
+    // the caller keeps blobId and can still fall back to manual review.
     if (!resp.ok) {
-      throw new Error("The analysis didn't come back this time. Your photo is safe — you can review by hand.");
+      let detail = "";
+      try { const errJson = await resp.json(); detail = (errJson && errJson.error) || ""; } catch (_) { /* no body */ }
+      throw new Error(detail
+        ? "Enhanced AI failed: " + detail
+        : "The analysis didn't come back (HTTP " + resp.status + "). Your photo is safe — you can review by hand.");
     }
     const api = await resp.json();
     // (e) normalize into WorksheetAnalysis
@@ -2193,13 +2198,28 @@
           onProgress: (p) => { bar.style.width = Math.round((p || 0) * 100) + "%"; },
         });
       } catch (err) {
-        // Keep blobId; show a friendly message; fall back to an empty draft so the
-        // parent can review by hand. The image is never lost.
+        // Show the real reason and stop here so the message is actually seen.
+        // The photo is kept (blobId); the parent can continue to manual review
+        // with the button below rather than being dropped onto an empty screen.
+        bar.style.width = "0%";
         txt.textContent = (err && err.message) || "The analysis didn't come back. Your photo is safe — you can review by hand.";
-        analysis = {
+        const emptyDraft = {
           source: "worksheet", mode: useEnhanced ? "enhanced" : "local",
           overall: { subject: subject, score: null, avgComplexity: null }, attempts: [],
         };
+        if (!$("an-review-anyway")) {
+          const go = document.createElement("button");
+          go.type = "button";
+          go.id = "an-review-anyway";
+          go.className = "btn-secondary";
+          go.textContent = "Review by hand instead";
+          go.addEventListener("click", () => {
+            anDraft = Object.assign({ blobId: blobId }, emptyDraft);
+            openAnalyzerReview();
+          });
+          prog.appendChild(go);
+        }
+        return;
       }
       anDraft = Object.assign({ blobId: blobId }, analysis);
       openAnalyzerReview();
