@@ -1493,17 +1493,17 @@
         '<div class="vq-pct">' + pct + "%</div><p>" + msg + "</p></div>" +
         '<div class="form-actions">' +
         '<button type="button" id="vq-again" class="btn-primary">Play again</button>' +
-        '<button type="button" id="vq-log" class="btn-secondary">Save to progress</button></div>' +
-        '<p class="hint" id="vq-log-msg"></p>';
+        '<button type="button" id="vq-log" class="btn-secondary">Save to progress</button></div>';
       $("vq-again").addEventListener("click", () => openVocabQuest(game));
       $("vq-log").addEventListener("click", async () => {
+        $("vq-log").disabled = true;
         await EduStore.addEntry({
           date: todayISO(), subject: "vr", topic: "Vocabulary Quest", difficulty: "",
           scoreRaw: score, scoreMax: quiz.length, scorePct: pct,
           note: "Played Vocabulary Quest", blobId: null,
         });
-        $("vq-log").disabled = true;
-        $("vq-log-msg").textContent = "Saved to your daily log ✓";
+        // Close the dialog automatically once the round is saved.
+        closeModal();
       });
     }
   }
