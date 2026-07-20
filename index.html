@@ -464,14 +464,27 @@
       function doReload() {
         if (refreshing) return;
         refreshing = true;
+        // Hide the prompt before the reload so it never lingers once the new
+        // version is coming in — the user shouldn't see "update available" again.
+        hideUpdate();
         window.location.reload();
       }
 
-      // When the new SW takes control, reload once to pick up fresh assets.
+      // When the new SW takes control, the new version is now active: hide the
+      // prompt and reload once to pick up fresh assets.
       navigator.serviceWorker.addEventListener('controllerchange', doReload);
 
       function showUpdate() {
+        // Only prompt for a genuine UPDATE — i.e. a controller (old SW) is
+        // already running. On the very first install there's no previous version
+        // to replace, so we stay silent instead of showing a confusing "reload".
+        if (!navigator.serviceWorker.controller) return;
+        if (clicked) return; // an update is already in progress
         if (banner) banner.classList.remove('hidden');
+      }
+
+      function hideUpdate() {
+        if (banner) banner.classList.add('hidden');
       }
 
       // Track a worker until it's installed-and-waiting, then reveal the banner.
@@ -484,7 +497,13 @@
       }
 
       function activateUpdate() {
+        if (clicked) return;
         clicked = true;
+        // Give immediate feedback and hide the button so the stale "available"
+        // prompt can't confuse or be clicked twice while the update applies.
+        if (reloadBtn) reloadBtn.disabled = true;
+        var label = banner && banner.querySelector('span');
+        if (label) label.textContent = 'Updating…';
         // Ask the registration to re-check, so a freshly-waiting worker is
         // definitely present, then message whichever worker is waiting.
         function messageWaiting() {
