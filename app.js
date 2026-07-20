@@ -1113,6 +1113,24 @@
     { word: "vivid",        definition: "very bright, clear and lifelike" },
     { word: "wary",         definition: "careful and cautious about danger" },
     { word: "zealous",      definition: "showing great energy and passion for a cause" },
+    // Harder 11+ words — stretch vocabulary for stronger readers.
+    { word: "benevolent",   definition: "kind and wanting to help other people" },
+    { word: "cascade",      definition: "a small waterfall, or something falling in stages" },
+    { word: "conspicuous",  definition: "very easy to see or notice; standing out" },
+    { word: "deteriorate",  definition: "to become gradually worse in quality" },
+    { word: "eloquent",     definition: "able to speak or write clearly and persuasively" },
+    { word: "formidable",   definition: "very powerful and causing fear or respect" },
+    { word: "gregarious",   definition: "enjoying the company of other people; sociable" },
+    { word: "impeccable",   definition: "perfect, with no faults or mistakes" },
+    { word: "meticulous",   definition: "very careful about every small detail" },
+    { word: "nonchalant",   definition: "calm and relaxed, not showing worry" },
+    { word: "obstinate",    definition: "stubborn and refusing to change your mind" },
+    { word: "perpetual",    definition: "never ending; continuing all the time" },
+    { word: "resilient",    definition: "able to recover quickly after difficulty" },
+    { word: "scrupulous",   definition: "very honest and careful to do what is right" },
+    { word: "tenacious",    definition: "holding on firmly and not giving up" },
+    { word: "venerable",    definition: "respected because of great age or wisdom" },
+    { word: "voracious",    definition: "wanting large amounts of food or something else" },
   ];
 
   // Each real game maps its PLAY_GAMES title to a launcher; others fall back to the
@@ -1405,7 +1423,8 @@
     m.setAttribute("aria-hidden", "true");
   }
   // ---- Vocabulary Quest game ----
-  const VOCAB_QUIZ_LEN = 8; // questions per round
+  const VOCAB_QUIZ_LEN = 8;  // questions per round
+  const VOCAB_MASTER_AT = 2; // correct answers before a word counts as "mastered"
 
   // Fisher–Yates shuffle returning a NEW array (pure given rng).
   function shuffleArr(arr, rng) {
@@ -1418,15 +1437,52 @@
     return a;
   }
 
-  // Build a shuffled quiz: `count` questions, each with the word, its correct
-  // definition, and 3 distractor definitions from other words. Pure given rng, so
-  // it can be unit-tested deterministically.
-  function buildVocabQuiz(words, count, rng) {
+  // Weight a word for selection from its mastery record { seen, correct }.
+  // Unseen/struggling words get the highest weight; each correct answer lowers it,
+  // and once mastered (VOCAB_MASTER_AT correct) the weight drops sharply but never
+  // to zero, so mastered words still resurface occasionally for review. Weights are
+  // deliberately far apart so a large pool of mastered words can't crowd out the
+  // few un-mastered ones.
+  function vocabWeight(rec) {
+    const correct = (rec && rec.correct) || 0;
+    if (correct >= VOCAB_MASTER_AT) return 0.15;   // mastered: rare review only
+    return 12 - correct * 4;                        // 12 (new) → 8 (1 correct)
+  }
+
+  // Choose `count` words to quiz, favouring un-mastered words via weighted random
+  // sampling without replacement. Pure given rng, so it's unit-testable. `mastery`
+  // maps word → { seen, correct }; missing entries are treated as brand new.
+  function pickVocabWords(words, mastery, count, rng) {
     rng = rng || Math.random;
-    const pool = shuffleArr(words, rng);
-    const n = Math.min(count, pool.length);
+    mastery = mastery || {};
+    const pool = words.slice();
+    const n = Math.min(Math.max(count, 0), pool.length);
+    const chosen = [];
+    for (let k = 0; k < n; k++) {
+      let total = 0;
+      for (const w of pool) total += vocabWeight(mastery[w.word]);
+      let r = rng() * total;
+      let idx = 0;
+      for (let i = 0; i < pool.length; i++) {
+        r -= vocabWeight(mastery[pool[i].word]);
+        if (r <= 0) { idx = i; break; }
+      }
+      chosen.push(pool.splice(idx, 1)[0]);
+    }
+    return chosen;
+  }
+
+  // Build a shuffled quiz: `count` questions, each with the word, its correct
+  // definition, and 3 distractor definitions from other words. When `mastery` is
+  // given, words are chosen with mastery weighting; otherwise a plain shuffle is
+  // used. Pure given rng, so it can be unit-tested deterministically.
+  function buildVocabQuiz(words, count, rng, mastery) {
+    rng = rng || Math.random;
+    const pool = mastery
+      ? pickVocabWords(words, mastery, count, rng)
+      : shuffleArr(words, rng).slice(0, Math.min(count, words.length));
     const questions = [];
-    for (let i = 0; i < n; i++) {
+    for (let i = 0; i < pool.length; i++) {
       const w = pool[i];
       const distractors = shuffleArr(words.filter((x) => x.word !== w.word), rng)
         .slice(0, 3).map((x) => x.definition);
@@ -1439,8 +1495,17 @@
     return questions;
   }
 
-  function openVocabQuest(game) {
-    const quiz = buildVocabQuiz(VOCAB_WORDS, VOCAB_QUIZ_LEN);
+  // Per-student mastery lives in meta so it persists across rounds/devices via
+  // backup. Shape: { [word]: { seen, correct } }. Missing = brand-new word.
+  async function loadVocabMastery() {
+    const sid = await EduStore.getActiveStudentId();
+    const map = await EduStore.getMeta("vocabMastery." + sid);
+    return { key: "vocabMastery." + sid, map: map || {} };
+  }
+
+  async function openVocabQuest(game) {
+    const { key: masteryKey, map: mastery } = await loadVocabMastery();
+    const quiz = buildVocabQuiz(VOCAB_WORDS, VOCAB_QUIZ_LEN, Math.random, mastery);
     let idx = 0, score = 0, answered = false;
     openModal(game.title, '<div id="vq"></div>', { large: true });
     renderQuestion();
@@ -1468,6 +1533,12 @@
       const q = quiz[idx];
       const correct = q.options[i] === q.answer;
       if (correct) score++;
+      // Record this word's outcome so future rounds show mastered words less.
+      const rec = mastery[q.word] || { seen: 0, correct: 0 };
+      rec.seen++;
+      if (correct) rec.correct++;
+      mastery[q.word] = rec;
+      EduStore.setMeta(masteryKey, mastery);
       $("vq").querySelectorAll(".vq-option").forEach((b) => {
         const opt = q.options[parseInt(b.dataset.i, 10)];
         b.disabled = true;
