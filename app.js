@@ -1133,9 +1133,46 @@
     { word: "voracious",    definition: "wanting large amounts of food or something else" },
   ];
 
+  // Spelling Wizard word bank (11+ level). `word` is the target spelling (the child
+  // rebuilds it from shuffled letter tiles); `hint` is a short meaning shown as a
+  // clue and read aloud. Words are chosen for commonly-misspelled or tricky patterns
+  // (silent letters, double letters, -ough/-tion/-ei-). Self-contained for testing.
+  const SPELL_WORDS = [
+    { word: "necessary",    hint: "needed; something you must have" },
+    { word: "separate",     hint: "to keep or move apart" },
+    { word: "definitely",   hint: "without any doubt; for certain" },
+    { word: "beautiful",    hint: "very pleasing to look at" },
+    { word: "rhythm",       hint: "a regular repeated pattern of sound or movement" },
+    { word: "occasion",     hint: "a special or particular event" },
+    { word: "embarrass",    hint: "to make someone feel awkward or ashamed" },
+    { word: "government",   hint: "the group of people who run a country" },
+    { word: "privilege",    hint: "a special right given to a person or group" },
+    { word: "conscience",   hint: "your inner sense of right and wrong" },
+    { word: "mischievous",  hint: "playfully causing trouble" },
+    { word: "possession",   hint: "something that you own" },
+    { word: "definite",     hint: "clear and certain, with no doubt" },
+    { word: "acquire",      hint: "to get or gain something" },
+    { word: "immediately",  hint: "at once, without any delay" },
+    { word: "parliament",   hint: "the group that makes a country's laws" },
+    { word: "vegetable",    hint: "a plant grown to be eaten, like a carrot" },
+    { word: "temperature",  hint: "how hot or cold something is" },
+    { word: "environment",  hint: "the natural world around us" },
+    { word: "committee",    hint: "a small group chosen to make decisions" },
+    { word: "restaurant",   hint: "a place where you buy and eat meals" },
+    { word: "guarantee",    hint: "a firm promise that something will happen" },
+    { word: "knowledge",    hint: "the facts and information you have learned" },
+    { word: "neighbour",    hint: "a person who lives next to or near you" },
+    { word: "surprise",     hint: "an unexpected event or feeling" },
+    { word: "believe",      hint: "to think that something is true" },
+    { word: "friend",       hint: "a person you like and trust" },
+    { word: "island",       hint: "land with water all around it" },
+    { word: "science",      hint: "the study of the natural world through tests" },
+    { word: "weird",        hint: "strange or unusual" },
+  ];
+
   // Each real game maps its PLAY_GAMES title to a launcher; others fall back to the
   // "coming soon" placeholder. Function declarations are hoisted, so order is fine.
-  const GAME_LAUNCHERS = { "Vocabulary Quest": openVocabQuest };
+  const GAME_LAUNCHERS = { "Vocabulary Quest": openVocabQuest, "Spelling Wizard": openSpellWizard };
 
   // ---- focus quest (encouraging framing — NEVER "weakest subject") ----
   // Internally we still find the lowest recent average (reusing subjectRecentAvg,
@@ -1596,6 +1633,233 @@
           note: "Played Vocabulary Quest", blobId: null,
         });
         // Close the dialog automatically once the round is saved.
+        closeModal();
+      });
+    }
+  }
+
+  // ---- Spelling Wizard game ----
+  const SPELL_ROUND_LEN = 6;  // words per round
+  const SPELL_MASTER_AT = 2;  // correct spellings before a word counts as "mastered"
+
+  // Weight a word for selection from its mastery record { seen, correct }, mirroring
+  // vocabWeight: new/struggling words weigh most; mastered words drop sharply but
+  // never to zero so they still resurface occasionally for review.
+  function spellWeight(rec) {
+    const correct = (rec && rec.correct) || 0;
+    if (correct >= SPELL_MASTER_AT) return 0.15;   // mastered: rare review only
+    return 12 - correct * 4;                         // 12 (new) → 8 (1 correct)
+  }
+
+  // Choose `count` words to spell, favouring un-mastered words via weighted random
+  // sampling without replacement. Pure given rng, so it's unit-testable. `mastery`
+  // maps word → { seen, correct }; missing entries are treated as brand new.
+  function pickSpellWords(words, mastery, count, rng) {
+    rng = rng || Math.random;
+    mastery = mastery || {};
+    const pool = words.slice();
+    const n = Math.min(Math.max(count, 0), pool.length);
+    const chosen = [];
+    for (let k = 0; k < n; k++) {
+      let total = 0;
+      for (const w of pool) total += spellWeight(mastery[w.word]);
+      let r = rng() * total;
+      let idx = 0;
+      for (let i = 0; i < pool.length; i++) {
+        r -= spellWeight(mastery[pool[i].word]);
+        if (r <= 0) { idx = i; break; }
+      }
+      chosen.push(pool.splice(idx, 1)[0]);
+    }
+    return chosen;
+  }
+
+  // Build a round: `count` words, each with its hint and a shuffled set of letter
+  // tiles (the word's own letters). When `mastery` is given, words are chosen with
+  // mastery weighting; otherwise a plain shuffle is used. Pure given rng, so it can
+  // be unit-tested deterministically.
+  function buildSpellRound(words, count, rng, mastery) {
+    rng = rng || Math.random;
+    const pool = mastery
+      ? pickSpellWords(words, mastery, count, rng)
+      : shuffleArr(words, rng).slice(0, Math.min(count, words.length));
+    return pool.map((w) => ({
+      word: w.word,
+      hint: w.hint,
+      tiles: shuffleArr(w.word.split(""), rng),
+    }));
+  }
+
+  // Per-student mastery lives in meta (same seam as vocab) so it persists across
+  // rounds/devices via backup. Shape: { [word]: { seen, correct } }.
+  async function loadSpellMastery() {
+    const sid = await EduStore.getActiveStudentId();
+    const map = await EduStore.getMeta("spellMastery." + sid);
+    return { key: "spellMastery." + sid, map: map || {} };
+  }
+
+  // Speak a word aloud using the Web Speech API when available (a no-op otherwise,
+  // so the game still works without audio). Kept tiny and self-contained.
+  function speakWord(text) {
+    try {
+      if (!("speechSynthesis" in window)) return;
+      window.speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(String(text));
+      u.rate = 0.85; u.lang = "en-GB";
+      window.speechSynthesis.speak(u);
+    } catch (e) { /* audio is a nice-to-have; ignore failures */ }
+  }
+
+  async function openSpellWizard(game) {
+    const { key: masteryKey, map: mastery } = await loadSpellMastery();
+    const round = buildSpellRound(SPELL_WORDS, SPELL_ROUND_LEN, Math.random, mastery);
+    let idx = 0, score = 0, answered = false;
+    let built = [];  // indices into the current question's tiles, in chosen order
+    openModal(game.title, '<div id="sw"></div>', { large: true });
+    renderQuestion();
+
+    function renderQuestion() {
+      answered = false;
+      built = [];
+      const q = round[idx];
+      $("sw").innerHTML =
+        '<div class="sw-progress">Word ' + (idx + 1) + " of " + round.length + " · Score " + score + "</div>" +
+        '<p class="hint sw-hint">' + esc(q.hint) + "</p>" +
+        '<button type="button" id="sw-hear" class="sw-hear">🔊 Hear the word</button>' +
+        '<div class="sw-slots" id="sw-slots"></div>' +
+        '<div class="sw-tiles" id="sw-tiles"></div>' +
+        '<div class="sw-controls">' +
+        '<button type="button" id="sw-back" class="btn-secondary">⌫ Undo</button>' +
+        '<button type="button" id="sw-clear" class="btn-secondary">Clear</button>' +
+        '<button type="button" id="sw-reveal" class="sw-reveal">Show answer</button>' +
+        "</div>" +
+        '<div class="sw-feedback" id="sw-feedback"></div>' +
+        '<div class="form-actions"><button type="button" id="sw-next" class="btn-primary" disabled>Next</button></div>';
+      $("sw-hear").addEventListener("click", () => speakWord(q.word));
+      $("sw-back").addEventListener("click", undo);
+      $("sw-clear").addEventListener("click", () => { built = []; if (!answered) renderTiles(); });
+      $("sw-reveal").addEventListener("click", reveal);
+      $("sw-next").addEventListener("click", next);
+      renderTiles();
+      speakWord(q.word);  // say it once on load so the child hears the target
+    }
+
+    // Render the answer slots (letters placed so far) and the remaining tiles.
+    function renderTiles() {
+      const q = round[idx];
+      const slotsEl = $("sw-slots");
+      const usedByPos = built.slice();  // tile indices already placed
+      slotsEl.innerHTML = q.word.split("").map((_, i) => {
+        const ti = built[i];
+        const ch = ti == null ? "" : q.tiles[ti];
+        return '<span class="sw-slot' + (ch ? " sw-slot-filled" : "") + '">' + esc(ch) + "</span>";
+      }).join("");
+      $("sw-tiles").innerHTML = q.tiles.map((ch, i) => {
+        const used = usedByPos.indexOf(i) >= 0;
+        return '<button type="button" class="sw-tile" data-i="' + i + '"' +
+          (used || answered ? " disabled" : "") + '>' + esc(ch) + "</button>";
+      }).join("");
+      $("sw-tiles").querySelectorAll(".sw-tile").forEach((b) =>
+        b.addEventListener("click", () => place(parseInt(b.dataset.i, 10))));
+      // Auto-check once every slot is filled.
+      if (!answered && built.length === q.word.length) check();
+    }
+
+    function place(i) {
+      if (answered) return;
+      const q = round[idx];
+      if (built.length >= q.word.length) return;
+      if (built.indexOf(i) >= 0) return;  // tile already used
+      built.push(i);
+      renderTiles();
+    }
+
+    function undo() {
+      if (answered) return;
+      built.pop();
+      renderTiles();
+    }
+
+    function spelled(q) { return built.map((ti) => q.tiles[ti]).join(""); }
+
+    function check() {
+      if (answered) return;
+      answered = true;
+      const q = round[idx];
+      const correct = spelled(q) === q.word;
+      score += correct ? 1 : 0;
+      record(correct);
+      finish(correct
+        ? "✓ Correct!"
+        : "✗ Not quite. It spells: " + q.word, correct);
+      if (correct) {
+        const at = idx;
+        setTimeout(() => { if (at === idx && answered) next(); }, 900);
+      }
+    }
+
+    // "Show answer" — reveals the spelling, counts as not-correct (seen but not
+    // mastered), and waits for Next so the child can study the correct letters.
+    function reveal() {
+      if (answered) return;
+      answered = true;
+      const q = round[idx];
+      built = [];
+      // Fill slots with the correct spelling for study.
+      $("sw-slots").innerHTML = q.word.split("").map((ch) =>
+        '<span class="sw-slot sw-slot-filled sw-slot-shown">' + esc(ch) + "</span>").join("");
+      record(false);
+      finish("That's okay! It spells: " + q.word, false);
+    }
+
+    function record(correct) {
+      const q = round[idx];
+      const rec = mastery[q.word] || { seen: 0, correct: 0 };
+      rec.seen++;
+      if (correct) rec.correct++;
+      mastery[q.word] = rec;
+      EduStore.setMeta(masteryKey, mastery);
+    }
+
+    function finish(msg, correct) {
+      $("sw-tiles").querySelectorAll(".sw-tile").forEach((b) => { b.disabled = true; });
+      $("sw-slots").classList.add(correct ? "sw-slots-ok" : "sw-slots-no");
+      $("sw-back").disabled = true;
+      $("sw-clear").disabled = true;
+      $("sw-reveal").disabled = true;
+      const fb = $("sw-feedback");
+      fb.textContent = msg;
+      fb.className = "sw-feedback " + (correct ? "sw-fb-ok" : "sw-fb-no");
+      const nextBtn = $("sw-next");
+      nextBtn.disabled = false;
+      nextBtn.textContent = idx === round.length - 1 ? "See results" : "Next";
+      if (!correct) nextBtn.focus();
+    }
+
+    function next() {
+      if (idx < round.length - 1) { idx++; renderQuestion(); }
+      else renderResults();
+    }
+
+    function renderResults() {
+      const pct = Math.round((score / round.length) * 100);
+      const msg = pct >= 80 ? "Spelling star! 🌟"
+        : pct >= 50 ? "Great effort — keep going! 💪"
+        : "Good try — practice makes perfect! 🌱";
+      $("sw").innerHTML =
+        '<div class="vq-result"><div class="vq-score">' + score + " / " + round.length + "</div>" +
+        '<div class="vq-pct">' + pct + "%</div><p>" + msg + "</p></div>" +
+        '<div class="form-actions">' +
+        '<button type="button" id="sw-again" class="btn-primary">Play again</button>' +
+        '<button type="button" id="sw-log" class="btn-secondary">Save to progress</button></div>';
+      $("sw-again").addEventListener("click", () => openSpellWizard(game));
+      $("sw-log").addEventListener("click", async () => {
+        $("sw-log").disabled = true;
+        await EduStore.addEntry({
+          date: todayISO(), subject: "english", topic: "Spelling Wizard", difficulty: "",
+          scoreRaw: score, scoreMax: round.length, scorePct: pct,
+          note: "Played Spelling Wizard", blobId: null,
+        });
         closeModal();
       });
     }

@@ -567,6 +567,49 @@ h2 { font-size: 18px; font-weight: 800; letter-spacing: -0.01em; margin: 0 0 14p
 .vq-score { font-size: 34px; font-weight: 800; }
 .vq-pct { font-size: 16px; font-weight: 700; color: var(--muted); }
 
+/* ---- Spelling Wizard game ---- */
+.sw-progress { font-size: 13px; font-weight: 700; color: var(--muted); }
+.sw-hint { margin: 10px 0 8px; font-weight: 600; }
+.sw-hear {
+  display: inline-block; padding: 8px 14px; margin: 0 0 14px; font-size: 13px; font-weight: 700;
+  color: var(--text); background: var(--card-2); border: 1px solid var(--border-strong);
+  border-radius: var(--r-pill); cursor: pointer;
+}
+.sw-hear:hover { background: var(--card); }
+/* Answer slots — one box per letter of the target word. */
+.sw-slots { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 14px; min-height: 40px; }
+.sw-slot {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 34px; height: 40px; font-size: 18px; font-weight: 800; text-transform: uppercase;
+  color: var(--text); background: var(--card-2);
+  border: 1px solid var(--border-strong); border-radius: var(--r-sm);
+}
+.sw-slot-filled { background: var(--card); border-color: var(--accent-strong); }
+.sw-slot-shown { border-style: dashed; }
+.sw-slots-ok .sw-slot { background: var(--rag-green); color: #fff; border-color: transparent; }
+.sw-slots-no .sw-slot { border-color: var(--rag-red); }
+/* Shuffled letter tiles the child taps to build the spelling. */
+.sw-tiles { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 14px; }
+.sw-tile {
+  min-width: 40px; height: 44px; padding: 0 6px; font-size: 18px; font-weight: 800; text-transform: uppercase;
+  color: var(--text); background: var(--card-2);
+  border: 1px solid var(--border-strong); border-radius: var(--r-sm); cursor: pointer;
+}
+.sw-tile:hover:enabled { background: var(--card); }
+.sw-tile:disabled { opacity: 0.35; cursor: default; }
+.sw-controls { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 10px; }
+.sw-controls .btn-secondary { padding: 8px 12px; font-size: 13px; }
+.sw-reveal {
+  padding: 8px 12px; font-size: 13px; font-weight: 600; color: var(--muted);
+  background: transparent; border: 1px dashed var(--border-strong);
+  border-radius: var(--r-sm); cursor: pointer;
+}
+.sw-reveal:hover:enabled { color: var(--text); background: var(--card-2); }
+.sw-reveal:disabled { opacity: 0.5; cursor: default; }
+.sw-feedback { min-height: 20px; font-size: 14px; font-weight: 700; margin-bottom: 8px; }
+.sw-fb-ok { color: var(--rag-green); }
+.sw-fb-no { color: var(--rag-red); }
+
 /* ---- Modal ---- */
 .modal { position: fixed; inset: 0; z-index: 70; display: flex; align-items: center; justify-content: center; }
 .modal.hidden { display: none; }
@@ -609,8 +652,8 @@ h2 { font-size: 18px; font-weight: 800; letter-spacing: -0.01em; margin: 0 0 14p
   right: calc(12px + env(safe-area-inset-right));
 }
 .modal-game .modal-body { flex: 1 1 auto; overflow-y: auto; display: flex; }
-.modal-game #vq { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
-.modal-game #vq .form-actions { margin-top: auto; padding-top: 12px; }
+.modal-game #vq, .modal-game #sw { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
+.modal-game #vq .form-actions, .modal-game #sw .form-actions { margin-top: auto; padding-top: 12px; }
 .modal-game .vq-progress { font-size: 15px; }
 .modal-game .vq-word { font-size: 34px; margin: 10px 0 4px; }
 .modal-game .vq-options { gap: 12px; margin: 12px 0 14px; }
@@ -620,6 +663,10 @@ h2 { font-size: 18px; font-weight: 800; letter-spacing: -0.01em; margin: 0 0 14p
 .modal-game .vq-result { padding: 24px 0; }
 .modal-game .vq-score { font-size: 48px; }
 .modal-game .vq-pct { font-size: 20px; }
+.modal-game .sw-progress { font-size: 15px; }
+.modal-game .sw-hint { font-size: 17px; }
+.modal-game .sw-slot { width: 42px; height: 50px; font-size: 22px; }
+.modal-game .sw-tile { min-width: 48px; height: 54px; font-size: 22px; }
 .modal-game .form-actions .btn-primary,
 .modal-game .form-actions .btn-secondary { font-size: 16px; padding: 14px 16px; }
 

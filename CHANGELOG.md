@@ -5,6 +5,20 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Play & Create — Spelling Wizard
+
+- **New game: Spelling Wizard.** A letter-tile spelling game in the Play & Create
+  section: 6 words per round, each with a meaning hint and a "Hear the word"
+  button (reads it aloud via speech synthesis). The child taps shuffled letter
+  tiles to build the spelling, with Undo/Clear and a "Show answer" option.
+- **Instant feedback + flow.** Auto-checks once all letters are placed; a correct
+  spelling auto-advances after a brief pause, while a wrong one reveals the
+  correct spelling and waits for a tap so the child can study it.
+- **Remembers what the child knows.** Uses the same per-student, per-word mastery
+  seam as Vocabulary Quest (stored via `EduStore` meta), so mastered spellings
+  appear far less often while un-mastered ones are favoured.
+- **Saves to progress.** Results can be logged to the daily log under English.
+
 ### Play & Create — Vocabulary Quest
 
 - **New game: Vocabulary Quest.** A multiple-choice word-meaning game in the
@@ -41,3 +55,6 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 - Added `test/vocab-quest.test.js` covering the word bank integrity and the pure
   quiz/selection logic (`buildVocabQuiz`, `pickVocabWords`, `shuffleArr`),
   including mastery weighting and determinism.
+- Added `test/spelling-wizard.test.js` covering the spelling word bank integrity
+  and the pure round/selection logic (`buildSpellRound`, `pickSpellWords`),
+  including tile integrity, mastery weighting and determinism.
