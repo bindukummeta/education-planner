@@ -1084,6 +1084,41 @@
     { title: "Science Experiments", icon: "🔬", description: "Try a safe home experiment.",     tool: "Science" },
   ];
 
+  // Vocabulary Quest word bank (11+ level). A word's own definition is the correct
+  // answer; distractors are drawn from OTHER words' definitions, so every option is
+  // a real, plausible meaning. Definitions are unique so a distractor never matches
+  // the answer. Self-contained for easy extraction/testing.
+  const VOCAB_WORDS = [
+    { word: "abundant",     definition: "existing in very large quantities; plentiful" },
+    { word: "brisk",        definition: "quick, active and energetic" },
+    { word: "candid",       definition: "honest and direct in what you say" },
+    { word: "diligent",     definition: "showing careful and steady hard work" },
+    { word: "elated",       definition: "extremely happy and excited" },
+    { word: "feeble",       definition: "lacking strength; weak" },
+    { word: "gracious",     definition: "kind, polite and pleasant to others" },
+    { word: "hostile",      definition: "unfriendly and ready to argue or fight" },
+    { word: "immense",      definition: "extremely large in size or amount" },
+    { word: "jovial",       definition: "cheerful and full of good humour" },
+    { word: "keen",         definition: "very eager or enthusiastic" },
+    { word: "lenient",      definition: "gentle and not strict when punishing" },
+    { word: "meagre",       definition: "very small in amount; not enough" },
+    { word: "novel",        definition: "new, original and different" },
+    { word: "obscure",      definition: "not well known or hard to understand" },
+    { word: "placid",       definition: "calm and peaceful, not easily upset" },
+    { word: "quaint",       definition: "attractively old-fashioned or unusual" },
+    { word: "reluctant",    definition: "unwilling and hesitant to do something" },
+    { word: "scarce",       definition: "hard to find because there is very little" },
+    { word: "timid",        definition: "shy and easily frightened" },
+    { word: "utter",        definition: "complete or total, without exception" },
+    { word: "vivid",        definition: "very bright, clear and lifelike" },
+    { word: "wary",         definition: "careful and cautious about danger" },
+    { word: "zealous",      definition: "showing great energy and passion for a cause" },
+  ];
+
+  // Each real game maps its PLAY_GAMES title to a launcher; others fall back to the
+  // "coming soon" placeholder. Function declarations are hoisted, so order is fine.
+  const GAME_LAUNCHERS = { "Vocabulary Quest": openVocabQuest };
+
   // ---- focus quest (encouraging framing — NEVER "weakest subject") ----
   // Internally we still find the lowest recent average (reusing subjectRecentAvg,
   // the same pipeline as Progress/Readiness), but the CHILD only ever sees
@@ -1142,7 +1177,9 @@
       const btn = document.createElement("button");
       btn.className = "btn-primary";
       btn.textContent = "▶ Play";
+      const launcher = GAME_LAUNCHERS[g.title];
       btn.addEventListener("click", () =>
+        launcher ? launcher(g) :
         openModal(g.title,
           "<p>" + esc(g.skillsText) + "</p>" +
           '<p class="hint">This game will be available soon. Check back after the next update!</p>'));
@@ -1362,6 +1399,115 @@
     m.classList.add("hidden");
     m.setAttribute("aria-hidden", "true");
   }
+  // ---- Vocabulary Quest game ----
+  const VOCAB_QUIZ_LEN = 8; // questions per round
+
+  // Fisher–Yates shuffle returning a NEW array (pure given rng).
+  function shuffleArr(arr, rng) {
+    rng = rng || Math.random;
+    const a = arr.slice();
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1));
+      const t = a[i]; a[i] = a[j]; a[j] = t;
+    }
+    return a;
+  }
+
+  // Build a shuffled quiz: `count` questions, each with the word, its correct
+  // definition, and 3 distractor definitions from other words. Pure given rng, so
+  // it can be unit-tested deterministically.
+  function buildVocabQuiz(words, count, rng) {
+    rng = rng || Math.random;
+    const pool = shuffleArr(words, rng);
+    const n = Math.min(count, pool.length);
+    const questions = [];
+    for (let i = 0; i < n; i++) {
+      const w = pool[i];
+      const distractors = shuffleArr(words.filter((x) => x.word !== w.word), rng)
+        .slice(0, 3).map((x) => x.definition);
+      questions.push({
+        word: w.word,
+        answer: w.definition,
+        options: shuffleArr([w.definition].concat(distractors), rng),
+      });
+    }
+    return questions;
+  }
+
+  function openVocabQuest(game) {
+    const quiz = buildVocabQuiz(VOCAB_WORDS, VOCAB_QUIZ_LEN);
+    let idx = 0, score = 0, answered = false;
+    openModal(game.title, '<div id="vq"></div>');
+    renderQuestion();
+
+    function renderQuestion() {
+      answered = false;
+      const q = quiz[idx];
+      const optsHTML = q.options.map((opt, i) =>
+        '<button type="button" class="vq-option" data-i="' + i + '">' + esc(opt) + "</button>").join("");
+      $("vq").innerHTML =
+        '<div class="vq-progress">Question ' + (idx + 1) + " of " + quiz.length + " · Score " + score + "</div>" +
+        '<div class="vq-word">' + esc(q.word) + "</div>" +
+        '<p class="hint">What does this word mean?</p>' +
+        '<div class="vq-options">' + optsHTML + "</div>" +
+        '<div class="vq-feedback" id="vq-feedback"></div>' +
+        '<div class="form-actions"><button type="button" id="vq-next" class="btn-primary" disabled>Next</button></div>';
+      $("vq").querySelectorAll(".vq-option").forEach((b) =>
+        b.addEventListener("click", () => choose(parseInt(b.dataset.i, 10))));
+      $("vq-next").addEventListener("click", next);
+    }
+
+    function choose(i) {
+      if (answered) return;
+      answered = true;
+      const q = quiz[idx];
+      const correct = q.options[i] === q.answer;
+      if (correct) score++;
+      $("vq").querySelectorAll(".vq-option").forEach((b) => {
+        const opt = q.options[parseInt(b.dataset.i, 10)];
+        b.disabled = true;
+        if (opt === q.answer) b.classList.add("vq-correct");
+        else if (parseInt(b.dataset.i, 10) === i) b.classList.add("vq-wrong");
+      });
+      const fb = $("vq-feedback");
+      fb.textContent = correct ? "✓ Correct!" : "✗ It means: " + q.answer;
+      fb.className = "vq-feedback " + (correct ? "vq-fb-ok" : "vq-fb-no");
+      const nextBtn = $("vq-next");
+      nextBtn.disabled = false;
+      nextBtn.textContent = idx === quiz.length - 1 ? "See results" : "Next";
+      nextBtn.focus();
+    }
+
+    function next() {
+      if (idx < quiz.length - 1) { idx++; renderQuestion(); }
+      else renderResults();
+    }
+
+    function renderResults() {
+      const pct = Math.round((score / quiz.length) * 100);
+      const msg = pct >= 80 ? "Amazing work! 🌟"
+        : pct >= 50 ? "Great effort — keep going! 💪"
+        : "Good try — practice makes perfect! 🌱";
+      $("vq").innerHTML =
+        '<div class="vq-result"><div class="vq-score">' + score + " / " + quiz.length + "</div>" +
+        '<div class="vq-pct">' + pct + "%</div><p>" + msg + "</p></div>" +
+        '<div class="form-actions">' +
+        '<button type="button" id="vq-again" class="btn-primary">Play again</button>' +
+        '<button type="button" id="vq-log" class="btn-secondary">Save to progress</button></div>' +
+        '<p class="hint" id="vq-log-msg"></p>';
+      $("vq-again").addEventListener("click", () => openVocabQuest(game));
+      $("vq-log").addEventListener("click", async () => {
+        await EduStore.addEntry({
+          date: todayISO(), subject: "vr", topic: "Vocabulary Quest", difficulty: "",
+          scoreRaw: score, scoreMax: quiz.length, scorePct: pct,
+          note: "Played Vocabulary Quest", blobId: null,
+        });
+        $("vq-log").disabled = true;
+        $("vq-log-msg").textContent = "Saved to your daily log ✓";
+      });
+    }
+  }
+
   // ========== END PLAY & CREATE ==========
 
   // ============ CURIOSITY ============

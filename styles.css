@@ -537,6 +537,26 @@ h2 { font-size: 18px; font-weight: 800; letter-spacing: -0.01em; margin: 0 0 14p
 .pc-reflect-summary p:last-child { margin-bottom: 0; }
 .pc-reflect-summary textarea { width: 100%; }
 
+/* ---- Vocabulary Quest game ---- */
+.vq-progress { font-size: 13px; font-weight: 700; color: var(--muted); }
+.vq-word { font-size: 26px; font-weight: 800; letter-spacing: -0.01em; margin: 8px 0 2px; }
+.vq-options { display: flex; flex-direction: column; gap: 8px; margin: 6px 0 10px; }
+.vq-option {
+  text-align: left; padding: 12px 14px; font-size: 14px; font-weight: 600;
+  color: var(--text); background: var(--card-2); border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm); cursor: pointer;
+}
+.vq-option:hover:enabled { background: var(--card); }
+.vq-option:disabled { cursor: default; }
+.vq-correct { background: var(--rag-green); color: #fff; border-color: transparent; }
+.vq-wrong { background: var(--rag-red); color: #fff; border-color: transparent; }
+.vq-feedback { min-height: 20px; font-size: 14px; font-weight: 700; margin-bottom: 8px; }
+.vq-fb-ok { color: var(--rag-green); }
+.vq-fb-no { color: var(--rag-red); }
+.vq-result { text-align: center; padding: 8px 0 4px; }
+.vq-score { font-size: 34px; font-weight: 800; }
+.vq-pct { font-size: 16px; font-weight: 700; color: var(--muted); }
+
 /* ---- Modal ---- */
 .modal { position: fixed; inset: 0; z-index: 70; display: flex; align-items: center; justify-content: center; }
 .modal.hidden { display: none; }

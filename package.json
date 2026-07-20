@@ -7,6 +7,6 @@
     "node": ">=18"
   },
   "scripts": {
-    "test": "node test/heuristics.test.js"
+    "test": "node test/heuristics.test.js && node test/vocab-quest.test.js"
   }
 }
