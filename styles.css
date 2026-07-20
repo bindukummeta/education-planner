@@ -582,6 +582,25 @@ h2 { font-size: 18px; font-weight: 800; letter-spacing: -0.01em; margin: 0 0 14p
 .modal-body textarea, .modal-body select, .modal-body input { width: 100%; box-sizing: border-box; }
 .modal-body textarea { resize: vertical; font: inherit; }
 
+/* ---- Large game modal (opt-in via .modal-game) — bigger, easier play area ---- */
+.modal-game .modal-card {
+  width: min(96vw, 640px); height: 92vh; max-height: 92vh;
+  display: flex; flex-direction: column; padding: 22px 20px;
+}
+.modal-game .modal-body { flex: 1 1 auto; overflow-y: auto; display: flex; }
+.modal-game #vq { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
+.modal-game #vq .form-actions { margin-top: auto; padding-top: 12px; }
+.modal-game .vq-progress { font-size: 15px; }
+.modal-game .vq-word { font-size: 34px; margin: 10px 0 4px; }
+.modal-game .vq-options { gap: 12px; margin: 12px 0 14px; }
+.modal-game .vq-option { font-size: 16px; padding: 16px 18px; }
+.modal-game .vq-feedback { font-size: 16px; }
+.modal-game .vq-result { padding: 24px 0; }
+.modal-game .vq-score { font-size: 48px; }
+.modal-game .vq-pct { font-size: 20px; }
+.modal-game .form-actions .btn-primary,
+.modal-game .form-actions .btn-secondary { font-size: 16px; padding: 14px 16px; }
+
 /* ---- Curiosity ---- */
 .cur-patterns { background: linear-gradient(135deg, color-mix(in srgb, var(--accent-2) 16%, var(--card)) 0%, var(--card) 100%); }
 .cur-patterns ul { margin: 6px 0 0; padding-left: 20px; }

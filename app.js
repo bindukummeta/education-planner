@@ -1386,17 +1386,22 @@
   }
 
   // ---- reusable modal (no existing dialog component; mirrors drawer a11y) ----
-  function openModal(title, bodyHTML) {
+  // opts.large opens a big, near-fullscreen dialog (used for games); default off.
+  function openModal(title, bodyHTML, opts) {
+    opts = opts || {};
+    const m = $("modal");
     $("modal-title").textContent = title;
     $("modal-body").innerHTML = bodyHTML;
-    $("modal").classList.remove("hidden");
-    $("modal").setAttribute("aria-hidden", "false");
+    m.classList.toggle("modal-game", !!opts.large);
+    m.classList.remove("hidden");
+    m.setAttribute("aria-hidden", "false");
     $("modal-close").focus();
   }
   function closeModal() {
     const m = $("modal");
     if (!m) return;
     m.classList.add("hidden");
+    m.classList.remove("modal-game");
     m.setAttribute("aria-hidden", "true");
   }
   // ---- Vocabulary Quest game ----
@@ -1437,7 +1442,7 @@
   function openVocabQuest(game) {
     const quiz = buildVocabQuiz(VOCAB_WORDS, VOCAB_QUIZ_LEN);
     let idx = 0, score = 0, answered = false;
-    openModal(game.title, '<div id="vq"></div>');
+    openModal(game.title, '<div id="vq"></div>', { large: true });
     renderQuestion();
 
     function renderQuestion() {
