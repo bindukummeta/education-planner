@@ -1520,20 +1520,25 @@
         '<div class="vq-word">' + esc(q.word) + "</div>" +
         '<p class="hint">What does this word mean?</p>' +
         '<div class="vq-options">' + optsHTML + "</div>" +
+        '<button type="button" id="vq-idk" class="vq-idk">🤔 I don\'t know</button>' +
         '<div class="vq-feedback" id="vq-feedback"></div>' +
         '<div class="form-actions"><button type="button" id="vq-next" class="btn-primary" disabled>Next</button></div>';
       $("vq").querySelectorAll(".vq-option").forEach((b) =>
         b.addEventListener("click", () => choose(parseInt(b.dataset.i, 10))));
+      $("vq-idk").addEventListener("click", () => choose(-1));
       $("vq-next").addEventListener("click", next);
     }
 
+    // i is the chosen option index, or -1 for "I don't know".
     function choose(i) {
       if (answered) return;
       answered = true;
       const q = quiz[idx];
-      const correct = q.options[i] === q.answer;
+      const dontKnow = i === -1;
+      const correct = !dontKnow && q.options[i] === q.answer;
       if (correct) score++;
       // Record this word's outcome so future rounds show mastered words less.
+      // "I don't know" counts as seen-but-not-correct, same as a wrong answer.
       const rec = mastery[q.word] || { seen: 0, correct: 0 };
       rec.seen++;
       if (correct) rec.correct++;
@@ -1545,8 +1550,11 @@
         if (opt === q.answer) b.classList.add("vq-correct");
         else if (parseInt(b.dataset.i, 10) === i) b.classList.add("vq-wrong");
       });
+      $("vq-idk").disabled = true;
       const fb = $("vq-feedback");
-      fb.textContent = correct ? "✓ Correct!" : "✗ It means: " + q.answer;
+      fb.textContent = correct ? "✓ Correct!"
+        : dontKnow ? "That's okay! It means: " + q.answer
+        : "✗ It means: " + q.answer;
       fb.className = "vq-feedback " + (correct ? "vq-fb-ok" : "vq-fb-no");
       const nextBtn = $("vq-next");
       nextBtn.disabled = false;
