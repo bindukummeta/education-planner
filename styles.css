@@ -582,10 +582,21 @@ h2 { font-size: 18px; font-weight: 800; letter-spacing: -0.01em; margin: 0 0 14p
 .modal-body textarea, .modal-body select, .modal-body input { width: 100%; box-sizing: border-box; }
 .modal-body textarea { resize: vertical; font: inherit; }
 
-/* ---- Large game modal (opt-in via .modal-game) — bigger, easier play area ---- */
+/* ---- Full-screen game modal (opt-in via .modal-game) — fills the whole viewport
+   so the child stays focused on the game, not the page behind it. Respects phone
+   safe-areas (notch / home indicator) as this runs as an installed PWA. ---- */
 .modal-game .modal-card {
-  width: min(96vw, 640px); height: 92vh; max-height: 92vh;
-  display: flex; flex-direction: column; padding: 22px 20px;
+  width: 100vw; max-width: 100vw;
+  height: 100vh; height: 100dvh; max-height: 100dvh;
+  margin: 0; border: none; border-radius: 0;
+  display: flex; flex-direction: column;
+  padding:
+    calc(18px + env(safe-area-inset-top)) calc(20px + env(safe-area-inset-right))
+    calc(18px + env(safe-area-inset-bottom)) calc(20px + env(safe-area-inset-left));
+}
+.modal-game .modal-close {
+  top: calc(12px + env(safe-area-inset-top));
+  right: calc(12px + env(safe-area-inset-right));
 }
 .modal-game .modal-body { flex: 1 1 auto; overflow-y: auto; display: flex; }
 .modal-game #vq { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
