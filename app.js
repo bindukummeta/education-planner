@@ -1551,7 +1551,16 @@
       const nextBtn = $("vq-next");
       nextBtn.disabled = false;
       nextBtn.textContent = idx === quiz.length - 1 ? "See results" : "Next";
-      nextBtn.focus();
+      if (correct) {
+        // Auto-advance on a correct answer so the child keeps flowing, after a
+        // brief pause to see the green feedback. Wrong answers still wait for a
+        // tap so they can read the correct meaning. The idx guard makes the
+        // timer a no-op if the question already changed (manual Next / closed).
+        const at = idx;
+        setTimeout(() => { if (at === idx && answered) next(); }, 800);
+      } else {
+        nextBtn.focus();
+      }
     }
 
     function next() {
