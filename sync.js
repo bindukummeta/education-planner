@@ -76,6 +76,17 @@
     return sb.auth.signInWithOtp({ email: email, options: { emailRedirectTo: location.origin + location.pathname } });
   }
 
+  // Fallback for installed PWAs (esp. iOS) where the email link opens the system
+  // browser instead of this app: the user pastes the 6-digit code from the same
+  // email, and the resulting session lands in THIS context's storage.
+  async function verifyOtpCode(email, code) {
+    if (!sb) return { error: { message: "Sync not configured" } };
+    const token = String(code || "").trim();
+    const res = await sb.auth.verifyOtp({ email: email, token: token, type: "email" });
+    if (res && !res.error) applySession(res.data ? res.data.session : null);
+    return res;
+  }
+
   async function signOut() {
     if (!sb) return;
     await sb.auth.signOut();
@@ -157,5 +168,5 @@
     await window.EduStore.setMeta("lastPulledAt", maxTs);
   }
 
-  window.EduSync = { init: init, signInWithEmail: signInWithEmail, signOut: signOut, getStatus: getStatus, syncNow: syncNow, onChange: onChange };
+  window.EduSync = { init: init, signInWithEmail: signInWithEmail, verifyOtpCode: verifyOtpCode, signOut: signOut, getStatus: getStatus, syncNow: syncNow, onChange: onChange };
 })();

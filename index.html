@@ -433,7 +433,13 @@
         <div class="field" id="sync-signin">
           <label for="sync-email">Family email</label>
           <input id="sync-email" type="email" placeholder="you@example.com" autocomplete="email" />
-          <button type="button" id="sync-send-link" class="btn-secondary sync-primary">Send magic link</button>
+          <button type="button" id="sync-send-link" class="btn-secondary sync-primary">Send sign-in email</button>
+        </div>
+        <div class="field" id="sync-code-block" hidden>
+          <label for="sync-code">Enter the 6-digit code from the email</label>
+          <input id="sync-code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="123456" />
+          <button type="button" id="sync-verify-code" class="btn-primary sync-primary">Verify code</button>
+          <p class="hint">On iPhone, tapping the email link opens Safari — not this installed app. Enter the code here instead so this app signs in.</p>
         </div>
         <div class="sync-actions" id="sync-actions">
           <button type="button" id="sync-now" class="btn-secondary" hidden>Sync now</button>

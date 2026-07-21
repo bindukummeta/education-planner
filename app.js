@@ -3026,6 +3026,7 @@
     const statusEl = $("sync-status");
     const errEl = $("sync-error");
     const signin = $("sync-signin");
+    const codeBlock = $("sync-code-block");
     const actions = $("sync-actions");
     const nowBtn = $("sync-now");
     const outBtn = $("sync-signout");
@@ -3035,6 +3036,7 @@
       setSyncPill("off", "Off", false);
       statusEl.textContent = "Sync is not set up on this device.";
       if (signin) signin.hidden = true;
+      if (codeBlock) codeBlock.hidden = true;
       if (actions) actions.hidden = true;
       if (nowBtn) nowBtn.hidden = true;
       if (outBtn) outBtn.hidden = true;
@@ -3049,6 +3051,7 @@
       else if (st.lastSyncedAt) msg += " Last synced " + new Date(st.lastSyncedAt).toLocaleTimeString() + ".";
       statusEl.textContent = msg;
       if (signin) signin.hidden = true;
+      if (codeBlock) codeBlock.hidden = true;
       if (actions) actions.hidden = false;
       if (nowBtn) nowBtn.hidden = false;
       if (outBtn) outBtn.hidden = false;
@@ -3144,9 +3147,28 @@
         if (errEl) errEl.hidden = true;
         try {
           const res = await EduSync.signInWithEmail(email);
-          if (res && res.error) showErr("Could not send link: " + res.error.message);
-          else $("sync-status").textContent = "Check your email for the sign-in link.";
-        } catch (err) { showErr("Could not send link: " + (err.message || err)); }
+          if (res && res.error) showErr("Could not send email: " + res.error.message);
+          else {
+            $("sync-status").textContent = "Check your email, then enter the 6-digit code below.";
+            const codeBlock = $("sync-code-block");
+            if (codeBlock) codeBlock.hidden = false;
+            const codeInput = $("sync-code");
+            if (codeInput) codeInput.focus();
+          }
+        } catch (err) { showErr("Could not send email: " + (err.message || err)); }
+      });
+      $("sync-verify-code").addEventListener("click", async () => {
+        const email = $("sync-email").value.trim();
+        const code = $("sync-code").value.trim();
+        const errEl = $("sync-error");
+        const showErr = (m) => { if (errEl) { errEl.textContent = m; errEl.hidden = false; } };
+        if (errEl) errEl.hidden = true;
+        if (!email) { showErr("Enter your family email above first."); return; }
+        if (!code) { showErr("Enter the 6-digit code from the email."); return; }
+        try {
+          const res = await EduSync.verifyOtpCode(email, code);
+          if (res && res.error) showErr("Could not verify code: " + res.error.message);
+        } catch (err) { showErr("Could not verify code: " + (err.message || err)); }
       });
       $("sync-now").addEventListener("click", () => EduSync.syncNow());
       $("sync-signout").addEventListener("click", () => EduSync.signOut());
