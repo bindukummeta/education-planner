@@ -102,7 +102,7 @@
       const el = $("view-" + v);
       if (el) el.classList.toggle("hidden", v !== name);
     });
-    document.querySelectorAll(".nav-item").forEach((t) => {
+    document.querySelectorAll(".nav-item, .tab").forEach((t) => {
       t.classList.toggle("active", t.dataset.view === name);
     });
     closeDrawer();
@@ -3008,33 +3008,55 @@
   // ============ SETTINGS ============
   // Reflects EduSync status into the Family Sync card. Additive: if EduSync is
   // absent the card just keeps its default "Sign in to sync" hint.
+  // Sets the status pill's variant, label, and (for the syncing state) swaps the
+  // dot for a spinner. Keeps all pill classes in one place.
+  function setSyncPill(variant, label, spinning) {
+    const pill = $("sync-pill");
+    const txt = $("sync-pill-text");
+    if (!pill || !txt) return;
+    pill.className = "sync-pill sync-pill-" + variant;
+    txt.textContent = label;
+    const dot = pill.querySelector(".sync-dot, .spinner");
+    if (dot) dot.className = spinning ? "spinner" : "sync-dot";
+  }
+
   function renderSyncStatus() {
     if (!window.EduSync) return;
     const st = EduSync.getStatus();
     const statusEl = $("sync-status");
+    const errEl = $("sync-error");
     const signin = $("sync-signin");
+    const actions = $("sync-actions");
     const nowBtn = $("sync-now");
     const outBtn = $("sync-signout");
     if (!statusEl) return;
+    if (errEl) { errEl.hidden = !st.error; errEl.textContent = st.error || ""; }
     if (!st.enabled) {
+      setSyncPill("off", "Off", false);
       statusEl.textContent = "Sync is not set up on this device.";
       if (signin) signin.hidden = true;
+      if (actions) actions.hidden = true;
       if (nowBtn) nowBtn.hidden = true;
       if (outBtn) outBtn.hidden = true;
       return;
     }
     if (st.signedIn) {
+      if (st.syncing) setSyncPill("syncing", "Syncing…", true);
+      else if (st.error) setSyncPill("error", "Error", false);
+      else setSyncPill("synced", "Synced", false);
       let msg = "Signed in as " + (st.email || "family") + ".";
       if (st.syncing) msg += " Syncing…";
       else if (st.lastSyncedAt) msg += " Last synced " + new Date(st.lastSyncedAt).toLocaleTimeString() + ".";
-      if (st.error) msg += " (Last error: " + st.error + ")";
       statusEl.textContent = msg;
       if (signin) signin.hidden = true;
+      if (actions) actions.hidden = false;
       if (nowBtn) nowBtn.hidden = false;
       if (outBtn) outBtn.hidden = false;
     } else {
+      setSyncPill("signout", "Not signed in", false);
       statusEl.textContent = "Sign in to sync across devices.";
       if (signin) signin.hidden = false;
+      if (actions) actions.hidden = true;
       if (nowBtn) nowBtn.hidden = true;
       if (outBtn) outBtn.hidden = true;
     }
@@ -3073,7 +3095,7 @@
     activeSubject = SUBJECTS.indexOf(settings.lastSubject) >= 0 ? settings.lastSubject : "vr";
     $("f-home-postcode").value = settings.homePostcode || "";
 
-    document.querySelectorAll(".nav-item").forEach((t) =>
+    document.querySelectorAll(".nav-item, .tab").forEach((t) =>
       t.addEventListener("click", () => showView(t.dataset.view)));
     document.querySelectorAll("[data-goto]").forEach((b) =>
       b.addEventListener("click", () => {
@@ -3117,12 +3139,14 @@
       $("sync-send-link").addEventListener("click", async () => {
         const email = $("sync-email").value.trim();
         if (!email) return;
+        const errEl = $("sync-error");
+        const showErr = (m) => { if (errEl) { errEl.textContent = m; errEl.hidden = false; } };
+        if (errEl) errEl.hidden = true;
         try {
           const res = await EduSync.signInWithEmail(email);
-          $("sync-status").textContent = res && res.error
-            ? "Could not send link: " + res.error.message
-            : "Check your email for the sign-in link.";
-        } catch (err) { $("sync-status").textContent = "Could not send link: " + (err.message || err); }
+          if (res && res.error) showErr("Could not send link: " + res.error.message);
+          else $("sync-status").textContent = "Check your email for the sign-in link.";
+        } catch (err) { showErr("Could not send link: " + (err.message || err)); }
       });
       $("sync-now").addEventListener("click", () => EduSync.syncNow());
       $("sync-signout").addEventListener("click", () => EduSync.signOut());

@@ -10,6 +10,10 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Ed Planner" />
+  <!-- Heading font (progressive: falls back to system fonts when offline). -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@600;700;800&display=swap" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -418,16 +422,20 @@
         <p id="app-version" class="hint"></p>
       </div>
       <div class="card">
-        <h2>Family Sync</h2>
+        <div class="sync-head">
+          <h2>Family Sync</h2>
+          <span class="sync-pill sync-pill-off" id="sync-pill">
+            <span class="sync-dot"></span><span id="sync-pill-text">Off</span>
+          </span>
+        </div>
         <p class="hint" id="sync-status">Sign in to sync across devices.</p>
+        <p class="sync-error" id="sync-error" hidden></p>
         <div class="field" id="sync-signin">
           <label for="sync-email">Family email</label>
-          <div class="postcode-row">
-            <input id="sync-email" type="email" placeholder="you@example.com" autocomplete="email" />
-            <button type="button" id="sync-send-link" class="btn-secondary">Send magic link</button>
-          </div>
+          <input id="sync-email" type="email" placeholder="you@example.com" autocomplete="email" />
+          <button type="button" id="sync-send-link" class="btn-secondary sync-primary">Send magic link</button>
         </div>
-        <div class="backup-actions">
+        <div class="sync-actions" id="sync-actions">
           <button type="button" id="sync-now" class="btn-secondary" hidden>Sync now</button>
           <button type="button" id="sync-signout" class="btn-secondary" hidden>Sign out</button>
         </div>
@@ -435,6 +443,14 @@
       </div>
     </section>
   </main>
+
+  <nav id="tabbar" class="tabbar" aria-label="Primary">
+    <button type="button" class="tab" data-view="dashboard"><span class="tab-ico">🏠</span><span class="tab-label">Home</span></button>
+    <button type="button" class="tab" data-view="schools"><span class="tab-ico">🏫</span><span class="tab-label">Schools</span></button>
+    <button type="button" class="tab" data-view="log"><span class="tab-ico">📓</span><span class="tab-label">Log</span></button>
+    <button type="button" class="tab" data-view="playcreate"><span class="tab-ico">🎮</span><span class="tab-label">Play</span></button>
+    <button type="button" class="tab" data-view="settings"><span class="tab-ico">⚙️</span><span class="tab-label">Settings</span></button>
+  </nav>
 
   <div id="update-banner" class="update-banner hidden">
     <span>A new version is available.</span>
