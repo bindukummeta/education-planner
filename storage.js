@@ -7,7 +7,7 @@
   "use strict";
 
   const DB_NAME = "eduplanner";
-  const DB_VERSION = 5;
+  const DB_VERSION = 6;
   const DEFAULT_STUDENT_ID = "student-1";
   const STORES = {
     schools: "schools",
@@ -113,6 +113,10 @@
           s.createIndex("createdAt", "createdAt", { unique: false });
           s.createIndex("linkedId", "linkedId", { unique: false });
         }
+        // v6 (sync): a delete log (tombstones) and a push queue (dirty). Both are
+        // keyed by "<store>:<id>". Guarded so all existing v5 data is preserved.
+        if (!db.objectStoreNames.contains("_tombstones")) db.createObjectStore("_tombstones", { keyPath: "key" });
+        if (!db.objectStoreNames.contains("_dirty")) db.createObjectStore("_dirty", { keyPath: "key" });
       };
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
@@ -123,6 +127,65 @@
   async function tx(store, mode) {
     const db = await openDB();
     return db.transaction(store, mode).objectStore(store);
+  }
+
+  // ---- sync seam (internal) ----
+  // These power the optional cloud sync layer (sync.js). The PUBLIC EduStore
+  // surface is unchanged; app.js never needs to touch anything below.
+  const listeners = new Set();
+  function onChange(cb) {
+    listeners.add(cb);
+    return () => listeners.delete(cb);
+  }
+  function emitChange(store, id) {
+    listeners.forEach((fn) => { try { fn({ store: store, id: id }); } catch (_) {} });
+  }
+  // Mark a record as needing push (the write queue) and notify listeners.
+  async function markDirty(store, id, updatedAt) {
+    const s = await tx("_dirty", "readwrite");
+    await reqP(s.put({ key: store + ":" + id, store: store, id: id, updatedAt: updatedAt }));
+    emitChange(store, id);
+  }
+  // Record a delete so it can propagate to other devices.
+  async function writeTombstone(store, id, updatedAt) {
+    const t = await tx("_tombstones", "readwrite");
+    await reqP(t.put({ key: store + ":" + id, store: store, id: id, updatedAt: updatedAt }));
+  }
+  async function getDirty() {
+    const s = await tx("_dirty", "readonly");
+    return reqP(s.getAll());
+  }
+  async function clearDirty(keys) {
+    if (!keys || !keys.length) return;
+    const s = await tx("_dirty", "readwrite");
+    for (const k of keys) await reqP(s.delete(k));
+  }
+  async function getTombstones(since) {
+    const s = await tx("_tombstones", "readonly");
+    const rows = await reqP(s.getAll());
+    return since ? rows.filter((r) => (r.updatedAt || 0) > since) : rows;
+  }
+  async function getRecord(store, id) {
+    const s = await tx(store, "readonly");
+    return reqP(s.get(id));
+  }
+  // LWW upsert from a remote row. NEVER re-marks dirty (this is an inbound merge),
+  // and only overwrites when the remote copy is strictly newer.
+  async function applyRemote(store, record) {
+    if (!record || !record.id) return false;
+    const s = await tx(store, "readonly");
+    const cur = await reqP(s.get(record.id));
+    if (cur && (cur.updatedAt || 0) >= (record.updatedAt || 0)) return false;
+    const rw = await tx(store, "readwrite");
+    await reqP(rw.put(record));
+    emitChange(store, record.id);
+    return true;
+  }
+  // Remote delete: remove the local record without creating a tombstone/dirty.
+  async function applyRemoteDelete(store, id) {
+    const rw = await tx(store, "readwrite");
+    await reqP(rw.delete(id));
+    emitChange(store, id);
   }
 
   // ---- schools ----
@@ -145,11 +208,15 @@
     record.updatedAt = now;
     const store = await tx(STORES.schools, "readwrite");
     await reqP(store.put(record));
+    await markDirty(STORES.schools, record.id, record.updatedAt);
     return record;
   }
   async function deleteSchool(id) {
+    const now = Date.now();
     const store = await tx(STORES.schools, "readwrite");
-    return reqP(store.delete(id));
+    await reqP(store.delete(id));
+    await writeTombstone(STORES.schools, id, now);
+    await markDirty(STORES.schools, id, now);
   }
 
   // ---- entries ----
@@ -163,17 +230,22 @@
     return rows.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
   }
   async function addEntry(entry) {
-    const record = Object.assign({ id: uid(), createdAt: Date.now() }, entry);
+    const now = Date.now();
+    const record = Object.assign({ id: uid(), createdAt: now, updatedAt: now }, entry);
     const store = await tx(STORES.entries, "readwrite");
     await reqP(store.put(record));
+    await markDirty(STORES.entries, record.id, record.updatedAt);
     return record;
   }
   async function deleteEntry(id) {
+    const now = Date.now();
     const store = await tx(STORES.entries, "readonly");
     const entry = await reqP(store.get(id));
     if (entry && entry.blobId) await deleteBlob(entry.blobId);
     const rw = await tx(STORES.entries, "readwrite");
-    return reqP(rw.delete(id));
+    await reqP(rw.delete(id));
+    await writeTombstone(STORES.entries, id, now);
+    await markDirty(STORES.entries, id, now);
   }
 
   // ---- homework ----
@@ -190,6 +262,7 @@
     const record = Object.assign({ id: uid(), done: 0, doneAt: null, createdAt: now, updatedAt: now }, rec);
     const store = await tx(STORES.homework, "readwrite");
     await reqP(store.put(record));
+    await markDirty(STORES.homework, record.id, record.updatedAt);
     return record;
   }
   async function updateHomework(id, patch) {
@@ -199,11 +272,15 @@
     const record = Object.assign({}, cur, patch, { updatedAt: Date.now() });
     const rw = await tx(STORES.homework, "readwrite");
     await reqP(rw.put(record));
+    await markDirty(STORES.homework, record.id, record.updatedAt);
     return record;
   }
   async function deleteHomework(id) {
+    const now = Date.now();
     const store = await tx(STORES.homework, "readwrite");
-    return reqP(store.delete(id));
+    await reqP(store.delete(id));
+    await writeTombstone(STORES.homework, id, now);
+    await markDirty(STORES.homework, id, now);
   }
 
   // ---- reading ----
@@ -216,23 +293,29 @@
     return rows.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
   }
   async function addReading(rec) {
-    const record = Object.assign({ id: uid(), createdAt: Date.now() }, rec);
+    const now = Date.now();
+    const record = Object.assign({ id: uid(), createdAt: now, updatedAt: now }, rec);
     const store = await tx(STORES.reading, "readwrite");
     await reqP(store.put(record));
+    await markDirty(STORES.reading, record.id, record.updatedAt);
     return record;
   }
   async function updateReading(id, patch) {
     const store = await tx(STORES.reading, "readonly");
     const cur = await reqP(store.get(id));
     if (!cur) return null;
-    const record = Object.assign({}, cur, patch);
+    const record = Object.assign({}, cur, patch, { updatedAt: Date.now() });
     const rw = await tx(STORES.reading, "readwrite");
     await reqP(rw.put(record));
+    await markDirty(STORES.reading, record.id, record.updatedAt);
     return record;
   }
   async function deleteReading(id) {
+    const now = Date.now();
     const store = await tx(STORES.reading, "readwrite");
-    return reqP(store.delete(id));
+    await reqP(store.delete(id));
+    await writeTombstone(STORES.reading, id, now);
+    await markDirty(STORES.reading, id, now);
   }
 
   // ---- mocks ----
@@ -246,26 +329,32 @@
     return rows.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
   }
   async function addMocks(rec) {
-    const record = Object.assign({ id: uid(), createdAt: Date.now() }, rec);
+    const now = Date.now();
+    const record = Object.assign({ id: uid(), createdAt: now, updatedAt: now }, rec);
     const store = await tx(STORES.mocks, "readwrite");
     await reqP(store.put(record));
+    await markDirty(STORES.mocks, record.id, record.updatedAt);
     return record;
   }
   async function updateMocks(id, patch) {
     const store = await tx(STORES.mocks, "readonly");
     const cur = await reqP(store.get(id));
     if (!cur) return null;
-    const record = Object.assign({}, cur, patch);
+    const record = Object.assign({}, cur, patch, { updatedAt: Date.now() });
     const rw = await tx(STORES.mocks, "readwrite");
     await reqP(rw.put(record));
+    await markDirty(STORES.mocks, record.id, record.updatedAt);
     return record;
   }
   async function deleteMocks(id) {
+    const now = Date.now();
     const store = await tx(STORES.mocks, "readonly");
     const rec = await reqP(store.get(id));
     if (rec && rec.blobId) await deleteBlob(rec.blobId);
     const rw = await tx(STORES.mocks, "readwrite");
-    return reqP(rw.delete(id));
+    await reqP(rw.delete(id));
+    await writeTombstone(STORES.mocks, id, now);
+    await markDirty(STORES.mocks, id, now);
   }
 
   // ---- events (calendar) ----
@@ -279,23 +368,29 @@
     return rows.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
   }
   async function addEvent(rec) {
-    const record = Object.assign({ id: uid(), createdAt: Date.now() }, rec);
+    const now = Date.now();
+    const record = Object.assign({ id: uid(), createdAt: now, updatedAt: now }, rec);
     const store = await tx(STORES.events, "readwrite");
     await reqP(store.put(record));
+    await markDirty(STORES.events, record.id, record.updatedAt);
     return record;
   }
   async function updateEvent(id, patch) {
     const store = await tx(STORES.events, "readonly");
     const cur = await reqP(store.get(id));
     if (!cur) return null;
-    const record = Object.assign({}, cur, patch);
+    const record = Object.assign({}, cur, patch, { updatedAt: Date.now() });
     const rw = await tx(STORES.events, "readwrite");
     await reqP(rw.put(record));
+    await markDirty(STORES.events, record.id, record.updatedAt);
     return record;
   }
   async function deleteEvent(id) {
+    const now = Date.now();
     const store = await tx(STORES.events, "readwrite");
-    return reqP(store.delete(id));
+    await reqP(store.delete(id));
+    await writeTombstone(STORES.events, id, now);
+    await markDirty(STORES.events, id, now);
   }
 
   // ---- students (multi-student foundation; L = student 1) ----
@@ -311,9 +406,11 @@
   }
   async function setActiveStudentId(id) { return setMeta("activeStudentId", id); }
   async function addStudent(rec) {
-    const record = Object.assign({ id: uid(), createdAt: Date.now(), order: Date.now() }, rec);
+    const now = Date.now();
+    const record = Object.assign({ id: uid(), createdAt: now, updatedAt: now, order: now }, rec);
     const store = await tx(STORES.students, "readwrite");
     await reqP(store.put(record));
+    await markDirty(STORES.students, record.id, record.updatedAt);
     return record;
   }
 
@@ -341,6 +438,7 @@
     );
     const store = await tx(STORES.projects, "readwrite");
     await reqP(store.put(record));
+    await markDirty(STORES.projects, record.id, record.updatedAt);
     return record;
   }
   async function updateProject(id, patch) {
@@ -350,11 +448,15 @@
     const record = Object.assign({}, cur, patch, { updatedAt: Date.now() });
     const rw = await tx(STORES.projects, "readwrite");
     await reqP(rw.put(record));
+    await markDirty(STORES.projects, record.id, record.updatedAt);
     return record;
   }
   async function deleteProject(id) {
+    const now = Date.now();
     const store = await tx(STORES.projects, "readwrite");
-    return reqP(store.delete(id));
+    await reqP(store.delete(id));
+    await writeTombstone(STORES.projects, id, now);
+    await markDirty(STORES.projects, id, now);
   }
 
   // ---- curiosity (capture + connect; local patterns computed in app.js) ----
@@ -382,6 +484,7 @@
     );
     const store = await tx(STORES.curiosity, "readwrite");
     await reqP(store.put(record));
+    await markDirty(STORES.curiosity, record.id, record.updatedAt);
     return record;
   }
   async function updateCuriosity(id, patch) {
@@ -391,11 +494,15 @@
     const record = Object.assign({}, cur, patch, { updatedAt: Date.now() });
     const rw = await tx(STORES.curiosity, "readwrite");
     await reqP(rw.put(record));
+    await markDirty(STORES.curiosity, record.id, record.updatedAt);
     return record;
   }
   async function deleteCuriosity(id) {
+    const now = Date.now();
     const store = await tx(STORES.curiosity, "readwrite");
-    return reqP(store.delete(id));
+    await reqP(store.delete(id));
+    await writeTombstone(STORES.curiosity, id, now);
+    await markDirty(STORES.curiosity, id, now);
   }
 
   // ---- analyses (Homework Analyzer; persists a WorksheetAnalysis per capture) ----
@@ -420,6 +527,7 @@
     );
     const store = await tx(STORES.analyses, "readwrite");
     await reqP(store.put(record));
+    await markDirty(STORES.analyses, record.id, record.updatedAt);
     return record;
   }
   async function updateAnalysis(id, patch) {
@@ -429,21 +537,27 @@
     const record = Object.assign({}, cur, patch, { updatedAt: Date.now() });
     const rw = await tx(STORES.analyses, "readwrite");
     await reqP(rw.put(record));
+    await markDirty(STORES.analyses, record.id, record.updatedAt);
     return record;
   }
   async function deleteAnalysis(id) {
+    const now = Date.now();
     const store = await tx(STORES.analyses, "readonly");
     const rec = await reqP(store.get(id));
     if (rec && rec.blobId) await deleteBlob(rec.blobId);
     const rw = await tx(STORES.analyses, "readwrite");
-    return reqP(rw.delete(id));
+    await reqP(rw.delete(id));
+    await writeTombstone(STORES.analyses, id, now);
+    await markDirty(STORES.analyses, id, now);
   }
 
   // ---- blobs ----
   async function putBlob(blob, type) {
-    const record = { id: uid(), blob: blob, type: type || "image/jpeg", createdAt: Date.now() };
+    const now = Date.now();
+    const record = { id: uid(), blob: blob, type: type || "image/jpeg", createdAt: now, updatedAt: now };
     const store = await tx(STORES.blobs, "readwrite");
     await reqP(store.put(record));
+    await markDirty(STORES.blobs, record.id, record.updatedAt);
     return record.id;
   }
   async function getBlob(id) {
@@ -452,8 +566,11 @@
     return reqP(store.get(id));
   }
   async function deleteBlob(id) {
+    const now = Date.now();
     const store = await tx(STORES.blobs, "readwrite");
-    return reqP(store.delete(id));
+    await reqP(store.delete(id));
+    await writeTombstone(STORES.blobs, id, now);
+    await markDirty(STORES.blobs, id, now);
   }
 
   // ---- meta ----
@@ -600,5 +717,8 @@
     getBlob, putBlob, deleteBlob,
     getMeta, setMeta,
     exportAll, importAll,
+    // Internal sync surface (used by sync.js only; not part of the app API).
+    onChange, getDirty, clearDirty, getTombstones, getRecord,
+    applyRemote, applyRemoteDelete,
   };
 })();

@@ -417,6 +417,22 @@
         <span id="install-hint"></span>
         <p id="app-version" class="hint"></p>
       </div>
+      <div class="card">
+        <h2>Family Sync</h2>
+        <p class="hint" id="sync-status">Sign in to sync across devices.</p>
+        <div class="field" id="sync-signin">
+          <label for="sync-email">Family email</label>
+          <div class="postcode-row">
+            <input id="sync-email" type="email" placeholder="you@example.com" autocomplete="email" />
+            <button type="button" id="sync-send-link" class="btn-secondary">Send magic link</button>
+          </div>
+        </div>
+        <div class="backup-actions">
+          <button type="button" id="sync-now" class="btn-secondary" hidden>Sync now</button>
+          <button type="button" id="sync-signout" class="btn-secondary" hidden>Sign out</button>
+        </div>
+        <p class="hint">Enabling sync stores your data securely in Supabase so it can appear on your other devices. Leave it off to stay fully offline and on-device.</p>
+      </div>
     </section>
   </main>
 
@@ -438,8 +454,14 @@
     <p class="footer-source">Rankings sourced from <a href="https://www.thetimes.com/best-schools-league-table" target="_blank" rel="noopener noreferrer">The Times Best Schools League Table</a>.</p>
   </footer>
 
+  <!-- Pinned supabase-js v2 UMD (attaches window.supabase). Cross-origin: the SW
+       passes it through and it is NOT precached, so the app still boots offline
+       (sync.js guards for window.supabase being undefined). -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js" crossorigin="anonymous"></script>
+  <script src="sync-config.js"></script>
   <script src="storage.js"></script>
   <script src="schools-seed.js"></script>
+  <script src="sync.js"></script>
   <script src="app.js"></script>
   <script>
     // Register the service worker in production only. On localhost we skip it (and

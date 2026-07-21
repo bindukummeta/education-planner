@@ -26,3 +26,6 @@ _Items we've agreed to work on next._
 ## Done
 
 _Shipped items, newest first._
+
+- ✅ Cross-device sync — sign in with one shared family email (magic link) to sync
+  data and photos across devices; fully optional and offline-first. (2026-07-21)

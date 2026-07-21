@@ -1,10 +1,12 @@
-const CACHE = "eduplanner-v33";
+const CACHE = "eduplanner-v34";
 const ASSETS = [
   "./",
   "./index.html",
   "./styles.css",
   "./storage.js",
   "./schools-seed.js",
+  "./sync-config.js",
+  "./sync.js",
   "./app.js",
   "./manifest.webmanifest",
   "./icons/icon-192.png",
@@ -13,6 +15,9 @@ const ASSETS = [
 // Tesseract's engine + language model (~10–15 MB) are NOT precached — they are
 // fetched on first use of the Homework Analyzer and then cached by the
 // stale-while-revalidate handler below, so the shell stays lightweight.
+// The supabase-js CDN bundle is also NOT precached: it's cross-origin and the
+// fetch handler passes it straight through, so the app still boots offline
+// (sync.js no-ops when window.supabase is undefined).
 
 self.addEventListener("install", (event) => {
   // Pre-cache the shell. Do NOT skipWaiting here — the page decides when to

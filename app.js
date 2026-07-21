@@ -3006,9 +3006,44 @@
   // ========== END HOMEWORK ANALYZER ==========
 
   // ============ SETTINGS ============
+  // Reflects EduSync status into the Family Sync card. Additive: if EduSync is
+  // absent the card just keeps its default "Sign in to sync" hint.
+  function renderSyncStatus() {
+    if (!window.EduSync) return;
+    const st = EduSync.getStatus();
+    const statusEl = $("sync-status");
+    const signin = $("sync-signin");
+    const nowBtn = $("sync-now");
+    const outBtn = $("sync-signout");
+    if (!statusEl) return;
+    if (!st.enabled) {
+      statusEl.textContent = "Sync is not set up on this device.";
+      if (signin) signin.hidden = true;
+      if (nowBtn) nowBtn.hidden = true;
+      if (outBtn) outBtn.hidden = true;
+      return;
+    }
+    if (st.signedIn) {
+      let msg = "Signed in as " + (st.email || "family") + ".";
+      if (st.syncing) msg += " Syncing…";
+      else if (st.lastSyncedAt) msg += " Last synced " + new Date(st.lastSyncedAt).toLocaleTimeString() + ".";
+      if (st.error) msg += " (Last error: " + st.error + ")";
+      statusEl.textContent = msg;
+      if (signin) signin.hidden = true;
+      if (nowBtn) nowBtn.hidden = false;
+      if (outBtn) outBtn.hidden = false;
+    } else {
+      statusEl.textContent = "Sign in to sync across devices.";
+      if (signin) signin.hidden = false;
+      if (nowBtn) nowBtn.hidden = true;
+      if (outBtn) outBtn.hidden = true;
+    }
+  }
+
   async function renderSettings() {
     const el = $("app-version");
     if (el) el.textContent = "Education Planner · offline-first PWA";
+    renderSyncStatus();
     // Enhanced AI master switch (default OFF), persisted in EduStore meta.
     const toggle = $("set-enhanced-ai");
     if (toggle) {
@@ -3025,6 +3060,8 @@
   // ============ INIT ============
   async function init() {
     await EduStore.ready();
+    // Optional cloud sync (no-op unless supabase-js loaded + real config present).
+    if (window.EduSync) EduSync.init(window.EDU_SYNC_CONFIG);
     if (window.SchoolsSeed) {
       try { await window.SchoolsSeed.seedIfEmpty(); } catch (_) {}
       // Non-destructively refresh preset schools' factual fields (ranking,
@@ -3074,6 +3111,23 @@
     $("coach-run").addEventListener("click", runCoach);
     $("export-backup").addEventListener("click", exportBackup);
     $("import-backup").addEventListener("change", (e) => importBackup(e.target.files[0]));
+
+    // Family Sync (all guarded — the card is inert if EduSync isn't present).
+    if (window.EduSync) {
+      $("sync-send-link").addEventListener("click", async () => {
+        const email = $("sync-email").value.trim();
+        if (!email) return;
+        try {
+          const res = await EduSync.signInWithEmail(email);
+          $("sync-status").textContent = res && res.error
+            ? "Could not send link: " + res.error.message
+            : "Check your email for the sign-in link.";
+        } catch (err) { $("sync-status").textContent = "Could not send link: " + (err.message || err); }
+      });
+      $("sync-now").addEventListener("click", () => EduSync.syncNow());
+      $("sync-signout").addEventListener("click", () => EduSync.signOut());
+      EduSync.onChange(renderSyncStatus);
+    }
 
     $("e-date").value = todayISO();
     $("e-subject").value = activeSubject;

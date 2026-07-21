@@ -5,6 +5,28 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Cross-device Family Sync (optional, offline-first)
+
+- **New: optional cloud sync via Supabase.** A new "Family Sync" card in Settings
+  lets you sign in with a single shared family email (passwordless **magic link**)
+  so data appears across your devices. It is **additive and off by default** —
+  with no network or no configured `sync-config.js`, the app boots and behaves
+  exactly as before (IndexedDB stays the local source-of-truth).
+- **How it works.** Local writes are queued (`_dirty`) and deletes leave
+  tombstones (`_tombstones`); a background engine (`sync.js`) pushes them to a
+  single generic `records` table and pulls remote changes. Conflicts resolve
+  **last-write-wins** by a client-authored `updatedAt`. Worksheet/mock photos
+  sync via a private Supabase Storage bucket (`blobs`) — image bytes never live
+  in DB rows. Sync triggers on sign-in, app foreground, coming online, a short
+  debounce after edits, and a manual **"Sync now"** button.
+- **Config & security.** Supabase URL + anon key live in `sync-config.js`. The
+  **anon key is public by design and safe to ship** — real protection comes from
+  Row Level Security (RLS), which restricts every row to authenticated sessions.
+  Enabling sync means the child's data leaves the device and is stored in
+  Supabase; leave it off to stay fully on-device.
+- **Local schema.** IndexedDB bumped `DB_VERSION` 5 → 6 (guarded migration; all
+  existing data preserved). Service worker cache bumped v33 → v34.
+
 ### Play & Create — Spelling Wizard
 
 - **New game: Spelling Wizard.** A letter-tile spelling game in the Play & Create
