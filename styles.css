@@ -927,6 +927,13 @@ body.no-tabbar .tabbar { display: none; }
 .an-row select { width: 100%; margin-top: 4px; }
 .an-approve { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; margin-top: 10px; }
 .an-approve input { width: 18px; height: 18px; }
+/* Page thumbnails for a multi-page worksheet in the review screen. */
+.an-thumbs { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+.an-thumb { position: relative; width: 84px; }
+.an-thumb-img { width: 84px; height: 84px; object-fit: cover; border-radius: var(--r-sm); border: 1px solid var(--border-strong); display: block; }
+.an-thumb-label { display: block; font-size: 11px; color: var(--muted, #666); text-align: center; margin-top: 2px; }
+.an-thumb-del { position: absolute; top: 2px; right: 2px; border: none; border-radius: 999px; width: 22px; height: 22px;
+                background: rgba(0,0,0,.55); color: #fff; font-size: 12px; line-height: 1; cursor: pointer; }
 /* Enhanced AI (opt-in) review affordances */
 .an-needs-review { border-left: 3px solid var(--warn, #e08a00); background: var(--warn-bg, #fff8ec); }
 .an-badge { display: inline-block; font-size: .75rem; padding: .1rem .45rem; border-radius: 999px;

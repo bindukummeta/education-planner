@@ -544,7 +544,14 @@
     const now = Date.now();
     const store = await tx(STORES.analyses, "readonly");
     const rec = await reqP(store.get(id));
-    if (rec && rec.blobId) await deleteBlob(rec.blobId);
+    // Clean up every page photo: the new blobIds[] list plus the legacy single
+    // blobId, de-duplicated so a shared pointer is only deleted once.
+    if (rec) {
+      const ids = [];
+      if (Array.isArray(rec.blobIds)) rec.blobIds.forEach((b) => { if (b) ids.push(b); });
+      if (rec.blobId && ids.indexOf(rec.blobId) === -1) ids.push(rec.blobId);
+      for (const b of ids) await deleteBlob(b);
+    }
     const rw = await tx(STORES.analyses, "readwrite");
     await reqP(rw.delete(id));
     await writeTombstone(STORES.analyses, id, now);

@@ -2536,11 +2536,13 @@
   // The review/save/render code depends ONLY on analyseWorksheet + the
   // WorksheetAnalysis/QuestionAttempt shapes, never on Tesseract directly, so a
   // future server-side provider slots in with no UI or storage change.
+  // `image` may be a single Blob/File or an array of them (multi-page worksheet).
   async function analyseWorksheet(image, options) {
     options = options || {};
     const mode = options.mode || "local";
-    if (mode === "local") return localScanProvider(image, options);
-    return enhancedAiProvider(image, options);
+    const images = Array.isArray(image) ? image.filter(Boolean) : (image ? [image] : []);
+    if (mode === "local") return localScanProvider(images, options);
+    return enhancedAiProvider(images, options);
   }
 
   // Client-side language guard (defense-in-depth on top of the system prompt).
@@ -2600,9 +2602,12 @@
   // Mode B — opt-in cloud Vision analysis (Anthropic via /api/analyse-homework).
   // Gated by the settings master switch AND per-capture consent. Never writes to
   // storage — capture/review/save own persistence, exactly like local mode.
-  async function enhancedAiProvider(image, options) {
+  async function enhancedAiProvider(images, options) {
     options = options || {};
     const subject = options.subject || "maths";
+    // Accept a single blob or an array of blobs (multi-page worksheet).
+    const blobs = Array.isArray(images) ? images.filter(Boolean) : (images ? [images] : []);
+    if (!blobs.length) throw new Error("Could not read the photo.");
     // (a) consent gate: master switch ON + per-session consent
     const enabled = await EduStore.getMeta("analyzer.enhancedAi.enabled");
     if (enabled !== true && enabled !== "true") {
@@ -2611,15 +2616,19 @@
     if (options.consent !== true) {
       throw new Error("Please confirm the consent box to use Enhanced AI.");
     }
-    // (b) Blob -> base64 (strip data: prefix); capture mediaType
-    const mediaType = (image && image.type) || "image/jpeg";
-    const dataUrl = await new Promise((resolve, reject) => {
-      const fr = new FileReader();
-      fr.onload = () => resolve(fr.result);
-      fr.onerror = () => reject(new Error("Could not read the photo."));
-      fr.readAsDataURL(image);
-    });
-    const base64 = String(dataUrl).split(",")[1] || "";
+    // (b) each Blob -> base64 (strip data: prefix); capture mediaType per page
+    const payloadImages = [];
+    for (const blob of blobs) {
+      const mediaType = (blob && blob.type) || "image/jpeg";
+      const dataUrl = await new Promise((resolve, reject) => {
+        const fr = new FileReader();
+        fr.onload = () => resolve(fr.result);
+        fr.onerror = () => reject(new Error("Could not read the photo."));
+        fr.readAsDataURL(blob);
+      });
+      const base64 = String(dataUrl).split(",")[1] || "";
+      payloadImages.push({ mediaType: mediaType, data: base64 });
+    }
     if (options.onProgress) options.onProgress(0.2);
     // (c) POST with AbortController timeout (~60s). Vision analysis of a full
     // worksheet can take a while, so allow generous time before giving up.
@@ -2631,7 +2640,7 @@
       resp = await fetch("/api/analyse-homework", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ image: { mediaType: mediaType, data: base64 }, subject: subject }),
+        body: JSON.stringify({ images: payloadImages, subject: subject }),
         signal: options.signal || ctrl.signal,
       });
     } catch (e) {
@@ -2689,28 +2698,43 @@
 
   // Mode A — on-device OCR of PRINTED question text only. Correctness/marks always
   // come from the parent, never OCR. Returns a WorksheetAnalysis (unsaved).
-  async function localScanProvider(image, options) {
+  async function localScanProvider(images, options) {
     const onProgress = options.onProgress || function () {};
-    let text = "";
+    const subject = options.subject || "maths";
+    // Accept a single blob or an array of blobs (multi-page worksheet); OCR each
+    // page in turn and merge the extracted questions into one attempts list.
+    const blobs = Array.isArray(images) ? images.filter(Boolean) : (images ? [images] : []);
+    const attempts = [];
     try {
       const Tesseract = await ensureTesseract();
       onProgress(0.05);
-      const result = await Tesseract.recognize(image, "eng", {
-        // Directory paths let the worker auto-pick the best vendored core
-        // variant (simd / lstm) for the browser; all four are vendored locally.
-        langPath: "vendor/tesseract/lang",
-        corePath: "vendor/tesseract",
-        workerPath: "vendor/tesseract/worker.min.js",
-        logger: (m) => { if (m && m.status === "recognizing text" && typeof m.progress === "number") onProgress(m.progress); },
-      });
-      text = (result && result.data && result.data.text) || "";
+      for (let p = 0; p < blobs.length; p++) {
+        let text = "";
+        try {
+          const result = await Tesseract.recognize(blobs[p], "eng", {
+            // Directory paths let the worker auto-pick the best vendored core
+            // variant (simd / lstm) for the browser; all four are vendored locally.
+            langPath: "vendor/tesseract/lang",
+            corePath: "vendor/tesseract",
+            workerPath: "vendor/tesseract/worker.min.js",
+            // Map each page's 0..1 progress into its slice of the overall bar.
+            logger: (m) => {
+              if (m && m.status === "recognizing text" && typeof m.progress === "number") {
+                onProgress((p + m.progress) / blobs.length);
+              }
+            },
+          });
+          text = (result && result.data && result.data.text) || "";
+        } catch (e) {
+          // Skip a page that fails; the review UI still offers manual entry.
+          text = "";
+        }
+        splitQuestions(text).forEach((qtext) => attempts.push(makeAttempt(qtext, subject)));
+      }
     } catch (e) {
-      // Fall through with empty text — the review UI offers manual entry.
-      text = "";
+      // Tesseract itself failed to load — fall through with no attempts.
     }
     onProgress(1);
-    const subject = options.subject || "maths";
-    const attempts = splitQuestions(text).map((qtext) => makeAttempt(qtext, subject));
     return {
       source: options.source || "worksheet",
       mode: "local",
@@ -2862,27 +2886,37 @@
       '<form id="an-form" class="an-form">' +
       '<p class="hint">🔒 Private Scan reads the <b>printed questions</b> on the page. Your child\'s handwritten answers stay for you to mark with ✓ / part-marks / ✗ — the photo never leaves this device.</p>' +
       '<label>Subject<select id="an-subject">' + subjOpts + "</select></label>" +
-      '<label>Worksheet photo<input type="file" id="an-image" accept="image/*" required>' +
-      '<span class="hint an-file-hint">Take a photo or choose one from your library.</span></label>' +
+      '<label>Worksheet photo(s)<input type="file" id="an-image" accept="image/*" multiple required>' +
+      '<span class="hint an-file-hint">Take a photo or choose one or more from your library — add every page of the same worksheet.</span></label>' +
       enhancedBlock +
       '<div id="an-progress" class="an-progress hidden"><div class="an-bar"><span></span></div><span class="an-progress-txt">Reading the page…</span></div>' +
-      '<div class="form-actions"><button type="submit" class="btn-primary">Scan</button>' +
+      '<div class="form-actions"><button type="submit" id="an-scan" class="btn-primary">Scan</button>' +
       '<button type="button" id="an-manual" class="btn-secondary">Enter by hand instead</button></div>' +
       "</form>");
-    // Consent line is only meaningful when Enhanced AI is ticked.
+    // Consent line is only meaningful when Enhanced AI is ticked. Scan stays
+    // enabled for the local-only path (both boxes unticked); it is only blocked
+    // when Enhanced AI is ticked but consent has not yet been given.
     if (masterOn) {
+      const syncScan = () => {
+        const enhancedOn = $("an-enhanced").checked === true;
+        const consentOn = $("an-consent").checked === true;
+        $("an-scan").disabled = enhancedOn && !consentOn;
+      };
       $("an-enhanced").addEventListener("change", (e) => {
         $("an-consent-row").classList.toggle("hidden", !e.target.checked);
         if (!e.target.checked) $("an-consent").checked = false;
+        syncScan();
       });
+      $("an-consent").addEventListener("change", syncScan);
     }
     $("an-form").addEventListener("submit", async (e) => {
       e.preventDefault();
-      const file = $("an-image").files[0];
-      if (!file) return;
+      const files = Array.from($("an-image").files || []);
+      if (!files.length) return;
       const subject = $("an-subject").value;
       const useEnhanced = masterOn && $("an-enhanced") && $("an-enhanced").checked === true;
       const consent = !!(useEnhanced && $("an-consent") && $("an-consent").checked === true);
+      const multi = files.length > 1;
       const prog = $("an-progress");
       const bar = prog.querySelector(".an-bar span");
       const txt = prog.querySelector(".an-progress-txt");
@@ -2893,26 +2927,34 @@
         return;
       }
       prog.classList.remove("hidden");
-      txt.textContent = useEnhanced ? "Analysing the page…" : "Reading the page…";
-      // Compress → putBlob FIRST so the image survives any provider outcome.
-      let blobId = null;
-      let blob = file;
-      try {
-        blob = await compressImage(file, useEnhanced ? 1024 : 1600, useEnhanced ? 0.6 : 0.7);
-        blobId = await EduStore.putBlob(blob, "image/jpeg");
-      } catch (_) { blobId = null; }
+      const pageWord = multi ? "pages" : "page";
+      txt.textContent = useEnhanced ? ("Analysing the " + pageWord + "…") : ("Reading the " + pageWord + "…");
+      // Compress → putBlob FIRST so every image survives any provider outcome.
+      // blobIds keeps all pages; blobId keeps the first (legacy/thumbnail pointer).
+      const blobIds = [];
+      const blobs = [];
+      for (const file of files) {
+        let blob = file;
+        try {
+          blob = await compressImage(file, useEnhanced ? 1024 : 1600, useEnhanced ? 0.6 : 0.7);
+          const id = await EduStore.putBlob(blob, "image/jpeg");
+          if (id) blobIds.push(id);
+        } catch (_) { /* keep the (uncompressed) blob for analysis regardless */ }
+        blobs.push(blob);
+      }
+      const blobId = blobIds[0] || null;
       let analysis;
       try {
-        analysis = await analyseWorksheet(blob, {
+        analysis = await analyseWorksheet(blobs, {
           mode: useEnhanced ? "enhanced" : "local", subject: subject, consent: consent,
           onProgress: (p) => { bar.style.width = Math.round((p || 0) * 100) + "%"; },
         });
       } catch (err) {
         // Show the real reason and stop here so the message is actually seen.
-        // The photo is kept (blobId); the parent can continue to manual review
+        // The photos are kept (blobIds); the parent can continue to manual review
         // with the button below rather than being dropped onto an empty screen.
         bar.style.width = "0%";
-        txt.textContent = (err && err.message) || "The analysis didn't come back. Your photo is safe — you can review by hand.";
+        txt.textContent = (err && err.message) || "The analysis didn't come back. Your photos are safe — you can review by hand.";
         const emptyDraft = {
           source: "worksheet", mode: useEnhanced ? "enhanced" : "local",
           overall: { subject: subject, score: null, avgComplexity: null }, attempts: [],
@@ -2924,21 +2966,62 @@
           go.className = "btn-secondary";
           go.textContent = "Review by hand instead";
           go.addEventListener("click", () => {
-            anDraft = Object.assign({ blobId: blobId }, emptyDraft);
+            anDraft = Object.assign({ blobId: blobId, blobIds: blobIds }, emptyDraft);
             openAnalyzerReview();
           });
           prog.appendChild(go);
         }
         return;
       }
-      anDraft = Object.assign({ blobId: blobId }, analysis);
+      anDraft = Object.assign({ blobId: blobId, blobIds: blobIds }, analysis);
       openAnalyzerReview();
     });
     $("an-manual").addEventListener("click", () => {
       const subject = $("an-subject").value;
-      anDraft = { blobId: null, source: "worksheet", mode: "local", overall: { subject: subject, score: null, avgComplexity: null }, attempts: [] };
+      anDraft = { blobId: null, blobIds: [], source: "worksheet", mode: "local", overall: { subject: subject, score: null, avgComplexity: null }, attempts: [] };
       openAnalyzerReview();
     });
+  }
+
+  // Page photos for the current draft as an array. Prefers the new blobIds[]
+  // list but falls back to the legacy single blobId so old drafts still work.
+  function anDraftBlobIds() {
+    if (!anDraft) return [];
+    if (Array.isArray(anDraft.blobIds) && anDraft.blobIds.length) return anDraft.blobIds.slice();
+    return anDraft.blobId ? [anDraft.blobId] : [];
+  }
+
+  // Show a thumbnail for each page photo, with a 🗑 to drop a page the parent
+  // doesn't want kept. Removing a thumbnail deletes that blob immediately.
+  async function renderAnalyzerThumbs() {
+    const wrap = $("an-thumbs");
+    if (!wrap) return;
+    const ids = anDraftBlobIds();
+    if (ids.length < 1) { wrap.innerHTML = ""; return; }
+    wrap.innerHTML = ids.map((id, i) =>
+      '<div class="an-thumb" data-id="' + esc(id) + '">' +
+      '<span class="an-thumb-label">Page ' + (i + 1) + "</span>" +
+      (ids.length > 1 ? '<button type="button" class="an-thumb-del" aria-label="Remove this page" title="Remove page">🗑</button>' : "") +
+      "</div>").join("");
+    // Fill in each image asynchronously (getBlob is async).
+    for (const el of wrap.querySelectorAll(".an-thumb")) {
+      const id = el.dataset.id;
+      const b = await EduStore.getBlob(id);
+      if (b && b.blob) {
+        const img = document.createElement("img");
+        img.className = "an-thumb-img";
+        img.alt = "worksheet page";
+        img.src = trackURL(URL.createObjectURL(b.blob));
+        el.insertBefore(img, el.firstChild);
+      }
+      const del = el.querySelector(".an-thumb-del");
+      if (del) del.addEventListener("click", async () => {
+        anDraft.blobIds = anDraftBlobIds().filter((x) => x !== id);
+        if (anDraft.blobId === id) anDraft.blobId = anDraft.blobIds[0] || null;
+        await EduStore.deleteBlob(id);
+        renderAnalyzerThumbs();
+      });
+    }
   }
 
   // Review + tag: the parent confirms subject, edits/adds questions, records marks
@@ -2947,11 +3030,14 @@
     if (!anDraft) return;
     const subjOpts = SUBJECTS.map((s) =>
       '<option value="' + s + '"' + (s === anDraft.overall.subject ? " selected" : "") + ">" + esc(SUBJECT_LABEL[s]) + "</option>").join("");
+    // Normalize page photos to an array (supports legacy single-blob records).
+    const pageBlobIds = anDraftBlobIds();
     // Delete-after-approval only applies to the cloud (enhanced) path; local
     // photos are already on-device only, so they are kept and no option is shown.
-    const isEnhanced = anDraft.mode === "enhanced" && anDraft.blobId;
+    const isEnhanced = anDraft.mode === "enhanced" && pageBlobIds.length;
+    const photoWord = pageBlobIds.length > 1 ? "photos" : "photo";
     const keepBlock = isEnhanced
-      ? '<label class="an-keep"><input type="checkbox" id="an-keep-image"> Keep photo on device (otherwise it is deleted after you approve).</label>'
+      ? '<label class="an-keep"><input type="checkbox" id="an-keep-image"> Keep ' + photoWord + ' on device (otherwise ' + (pageBlobIds.length > 1 ? "they are" : "it is") + ' deleted after you approve).</label>'
       : "";
     const overallNote = (anDraft.overall && anDraft.overall.reasoningSummary)
       ? '<p class="an-ai-note">' + esc(anDraft.overall.reasoningSummary) + "</p>" : "";
@@ -2965,6 +3051,7 @@
       '<li><strong>Save</strong> — that\'s it. Adding extra detail is optional.</li>' +
       "</ol>" +
       "</div>" +
+      '<div id="an-thumbs" class="an-thumbs"></div>' +
       '<label>Subject<select id="an-r-subject">' + subjOpts + "</select></label>" +
       overallNote +
       '<div id="an-rows"></div>' +
@@ -2973,6 +3060,7 @@
       '<div class="form-actions"><button type="button" id="an-save" class="btn-primary">Save worksheet</button></div>' +
       "</div>");
     $("an-r-subject").addEventListener("change", () => { anDraft.overall.subject = $("an-r-subject").value; });
+    renderAnalyzerThumbs();
     renderAnalyzerRows();
     $("an-add-q").addEventListener("click", () => {
       anDraft.attempts.push(makeAttempt("", anDraft.overall.subject));
@@ -3088,13 +3176,15 @@
     // after approval; local captures always keep the photo (no cloud copy exists).
     const enhanced = anDraft.mode === "enhanced";
     const keep = $("an-keep-image") ? $("an-keep-image").checked === true : !enhanced;
+    const pageBlobIds = anDraftBlobIds();
     const record = {
       source: anDraft.source || "worksheet",
       mode: anDraft.mode || "local",
       provider: enhanced ? "anthropic" : null,
       aiConfidence: (anDraft.overall && anDraft.overall.aiConfidence) != null ? anDraft.overall.aiConfidence : null,
       imageDeletable: enhanced ? !keep : false,
-      blobId: anDraft.blobId || null,
+      blobId: pageBlobIds[0] || null,
+      blobIds: pageBlobIds.slice(),
       overall: {
         subject: anDraft.overall.subject,
         score: score,
@@ -3103,13 +3193,14 @@
       },
       attempts: attempts,
     };
-    // Delete-after-approval ordering: save the record with blobId nulled FIRST,
-    // then delete the blob, so a failed delete never leaves a dangling pointer.
-    if (enhanced && !keep && record.blobId) {
-      const oldBlobId = record.blobId;
+    // Delete-after-approval ordering: save the record with the blob pointers
+    // nulled FIRST, then delete the blobs, so a failed delete never leaves a
+    // dangling pointer. Applies across all page photos.
+    if (enhanced && !keep && pageBlobIds.length) {
       record.blobId = null;
+      record.blobIds = [];
       await EduStore.addAnalysis(record);
-      await EduStore.deleteBlob(oldBlobId);
+      for (const id of pageBlobIds) await EduStore.deleteBlob(id);
     } else {
       await EduStore.addAnalysis(record);
     }

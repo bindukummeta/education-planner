@@ -8,10 +8,12 @@ const ERROR_TYPES = ["concept", "calculation", "instruction", "incomplete", "tim
 const CORRECTNESS = ["correct", "incorrect", "partial", "unclear"];
 
 const SYSTEM_PROMPT = `You are a warm, encouraging assistant that helps a PARENT review their child's Maths homework.
-You are given a photo of ONE child's one-page Maths worksheet. Your job is to read it carefully
-and produce a structured record that the parent will review, correct, and approve. You are NOT
-grading the child and you are NOT talking to the child. Everything you produce is a SUGGESTION for
-the parent to confirm.
+You are given one or more photos that together make up ONE child's Maths worksheet (it may run over
+several pages — for example, context or a passage on one page and the questions on another). Treat all
+the photos as a single worksheet: read them together, in order, and use any context from earlier pages
+when judging the questions on later pages. Your job is to read it carefully and produce a structured
+record that the parent will review, correct, and approve. You are NOT grading the child and you are NOT
+talking to the child. Everything you produce is a SUGGESTION for the parent to confirm.
 
 WHAT TO EXTRACT
 For each question you can see on the worksheet, extract:
@@ -96,8 +98,11 @@ const RESPONSE_SCHEMA = {
   required: ["overall", "attempts"]
 };
 
-function buildUserPrompt(subject) {
-  return "This is a photo of ONE child's " + subject + " worksheet. " +
+function buildUserPrompt(subject, pageCount) {
+  const pages = pageCount > 1
+    ? "These " + pageCount + " photos are the pages of ONE child's " + subject + " worksheet, in order. "
+    : "This is a photo of ONE child's " + subject + " worksheet. ";
+  return pages +
     "Extract every question you can read and respond with ONLY the minified JSON described in your instructions.";
 }
 
@@ -152,12 +157,20 @@ module.exports = async (req, res) => {
   try { if (typeof body === "string") body = JSON.parse(body); } catch (e) { body = null; }
   if (!body || typeof body !== "object") return res.status(400).json({ error: "Invalid request" });
 
-  const image = body.image || {};
+  // Accept either a single `image` (legacy) or an `images` array (multi-page).
+  const images = Array.isArray(body.images) && body.images.length
+    ? body.images
+    : (body.image ? [body.image] : []);
   const subject = typeof body.subject === "string" && body.subject.trim() ? body.subject.trim() : "";
   if (!subject) return res.status(400).json({ error: "Subject is required" });
-  if (!ALLOWED_MEDIA.includes(image.mediaType)) return res.status(400).json({ error: "Unsupported image type" });
-  if (typeof image.data !== "string" || !image.data) return res.status(400).json({ error: "Missing image data" });
-  if (image.data.length * 0.75 > MAX_DECODED_BYTES) return res.status(413).json({ error: "Image too large" });
+  if (!images.length) return res.status(400).json({ error: "Missing image data" });
+  let totalBytes = 0;
+  for (const img of images) {
+    if (!img || !ALLOWED_MEDIA.includes(img.mediaType)) return res.status(400).json({ error: "Unsupported image type" });
+    if (typeof img.data !== "string" || !img.data) return res.status(400).json({ error: "Missing image data" });
+    totalBytes += img.data.length * 0.75;
+  }
+  if (totalBytes > MAX_DECODED_BYTES) return res.status(413).json({ error: "Images too large" });
 
   try {
     const upstream = await fetch(ANTHROPIC_URL, {
@@ -182,10 +195,9 @@ module.exports = async (req, res) => {
         system: SYSTEM_PROMPT,
         messages: [{
           role: "user",
-          content: [
-            { type: "image", source: { type: "base64", media_type: image.mediaType, data: image.data } },
-            { type: "text", text: buildUserPrompt(subject) }
-          ]
+          content: images
+            .map((img) => ({ type: "image", source: { type: "base64", media_type: img.mediaType, data: img.data } }))
+            .concat([{ type: "text", text: buildUserPrompt(subject, images.length) }])
         }]
       })
     });
