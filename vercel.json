@@ -6,7 +6,7 @@
       "maxDuration": 10
     },
     "api/analyse-homework.js": {
-      "maxDuration": 30
+      "maxDuration": 60
     }
   },
   "headers": [

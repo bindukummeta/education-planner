@@ -2614,9 +2614,11 @@
     });
     const base64 = String(dataUrl).split(",")[1] || "";
     if (options.onProgress) options.onProgress(0.2);
-    // (c) POST with AbortController timeout (~30s)
+    // (c) POST with AbortController timeout (~60s). Vision analysis of a full
+    // worksheet can take a while, so allow generous time before giving up.
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 30000);
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; ctrl.abort(); }, 60000);
     let resp;
     try {
       resp = await fetch("/api/analyse-homework", {
@@ -2627,6 +2629,9 @@
       });
     } catch (e) {
       clearTimeout(timer);
+      if (timedOut) {
+        throw new Error("The analysis took too long and timed out. Your photo is safe — try again, or review by hand.");
+      }
       throw new Error("We couldn't reach the analysis service. Your photo is safe — you can review by hand.");
     }
     clearTimeout(timer);
