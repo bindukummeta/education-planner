@@ -7,7 +7,7 @@
 // production). It is never sent to the browser.
 
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
-const MODEL = "claude-3-5-sonnet-latest";
+const DEFAULT_MODEL = "claude-sonnet-5";
 
 function buildPrompt(snapshot) {
   return [
@@ -31,7 +31,7 @@ function buildPrompt(snapshot) {
   ].join("\n");
 }
 
-async function callClaude(apiKey, prompt) {
+async function callClaude(apiKey, model, prompt) {
   const res = await fetch(ANTHROPIC_URL, {
     method: "POST",
     headers: {
@@ -40,7 +40,7 @@ async function callClaude(apiKey, prompt) {
       "anthropic-version": "2023-06-01",
     },
     body: JSON.stringify({
-      model: MODEL,
+      model,
       max_tokens: 1200,
       messages: [{ role: "user", content: prompt }],
     }),
@@ -74,8 +74,9 @@ module.exports = async (req, res) => {
     return;
   }
 
+  const model = process.env.ANTHROPIC_COACH_MODEL || DEFAULT_MODEL;
   try {
-    const advice = await callClaude(apiKey, buildPrompt(snapshot));
+    const advice = await callClaude(apiKey, model, buildPrompt(snapshot));
     res.status(200).json({ advice });
   } catch (err) {
     res.status(500).json({ error: err.message });
