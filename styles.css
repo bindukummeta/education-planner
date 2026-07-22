@@ -885,6 +885,15 @@ body.no-tabbar .tabbar { display: none; }
 .an-insights h3 { margin: 0 0 6px; font-size: 15px; font-weight: 800; }
 .an-insights ul { margin: 6px 0 0; padding-left: 20px; }
 .an-insights li { margin: 4px 0; font-size: 14px; line-height: 1.45; }
+.an-insights h4 { margin: 12px 0 4px; font-size: 13px; font-weight: 800; color: var(--muted); text-transform: uppercase; letter-spacing: 0.02em; }
+.an-trend { width: 100%; height: 260px; display: block; margin: 6px 0 4px; }
+.an-banner { font-size: 13px; font-weight: 700; margin: 0 0 8px; }
+.an-topic-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0; }
+.an-topic-row .chip { padding: 4px 10px; font-size: 12px; cursor: default; box-shadow: none; }
+.an-delta-up { color: var(--rag-green); font-weight: 800; }
+.an-delta-down { color: var(--rag-red); font-weight: 800; }
+.an-delta-flat { color: var(--muted); font-weight: 800; }
+.an-sub-count { color: var(--muted); font-size: 11px; margin-left: 4px; }
 .an-card { display: flex; gap: 12px; align-items: center; background: var(--card); border: 1px solid var(--border); border-radius: var(--r-md); padding: 10px; margin-bottom: 10px; box-shadow: var(--shadow-sm); }
 .an-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .an-chips .chip { padding: 4px 10px; font-size: 12px; cursor: default; box-shadow: none; }

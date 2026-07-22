@@ -486,6 +486,66 @@
     ctx.fillText(last.pct + "%", x(n - 1), y(last.pct) - 12);
   }
 
+  // Accuracy (0..100, accent line + dots) with an optional faint complexity
+  // series (cx 1..5 mapped to 0..100). points: [{t, pct, cx?}]. Mirrors
+  // drawLineChart's canvas 2D style; dependency-free.
+  function drawTrendChart(canvas, points, options) {
+    options = options || {};
+    points = points || [];
+    const ctx = canvas.getContext("2d");
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = canvas.clientWidth || 640, cssH = 260;
+    canvas.width = cssW * dpr; canvas.height = cssH * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+    const css = getComputedStyle(document.documentElement);
+    const border = css.getPropertyValue("--border").trim() || "#e6ecf5";
+    const muted = css.getPropertyValue("--muted").trim() || "#7b8aa6";
+    const accent = css.getPropertyValue("--accent").trim() || "#ffb020";
+    const text = css.getPropertyValue("--text").trim() || "#1f2740";
+    const pad = 32, plotW = cssW - pad * 2, plotH = cssH - pad * 2;
+    ctx.font = "11px -apple-system, sans-serif";
+    ctx.textBaseline = "middle";
+    [0, 25, 50, 75, 100].forEach((g) => {
+      const gy = pad + plotH - (g / 100) * plotH;
+      ctx.strokeStyle = border; ctx.beginPath(); ctx.moveTo(pad, gy); ctx.lineTo(pad + plotW, gy); ctx.stroke();
+      ctx.fillStyle = muted; ctx.textAlign = "right"; ctx.fillText(g + "%", pad - 6, gy);
+    });
+    if (!points.length) {
+      ctx.fillStyle = muted; ctx.textAlign = "center";
+      ctx.fillText("Add more worksheets to see trends", cssW / 2, cssH / 2);
+      return;
+    }
+    if (options.label) {
+      ctx.fillStyle = muted; ctx.textAlign = "left";
+      ctx.fillText(options.label, pad, pad / 2);
+    }
+    const n = points.length;
+    const x = (i) => n === 1 ? pad + plotW / 2 : pad + (i / (n - 1)) * plotW;
+    const y = (pct) => pad + plotH - (pct / 100) * plotH;
+    // Faint complexity series first (cx 1..5 mapped onto the 0..100 axis).
+    const cxPts = points.map((p, i) => ({ i: i, cx: p.cx })).filter((p) => p.cx != null);
+    if (cxPts.length > 1) {
+      ctx.strokeStyle = muted; ctx.lineWidth = 1.5; ctx.beginPath();
+      cxPts.forEach((p, k) => { const px = x(p.i), py = pad + plotH - (p.cx / 5) * plotH; k ? ctx.lineTo(px, py) : ctx.moveTo(px, py); });
+      ctx.stroke();
+    }
+    // Accuracy line + dots (skip null pct points).
+    const accPts = points.map((p, i) => ({ i: i, pct: p.pct })).filter((p) => p.pct != null);
+    if (accPts.length > 1) {
+      ctx.strokeStyle = accent; ctx.lineWidth = 2.5; ctx.beginPath();
+      accPts.forEach((p, k) => { const px = x(p.i), py = y(p.pct); k ? ctx.lineTo(px, py) : ctx.moveTo(px, py); });
+      ctx.stroke();
+    }
+    ctx.fillStyle = accent;
+    accPts.forEach((p) => { ctx.beginPath(); ctx.arc(x(p.i), y(p.pct), 4, 0, Math.PI * 2); ctx.fill(); });
+    if (accPts.length) {
+      const last = accPts[accPts.length - 1];
+      ctx.fillStyle = text; ctx.textAlign = "center";
+      ctx.fillText(last.pct + "%", x(last.i), y(last.pct) - 12);
+    }
+  }
+
   // Recent-average for a subject at (or above) a difficulty floor. Entries
   // whose tagged difficulty ordinal is >= floorOrd count; untagged entries
   // always count (backward-compatible) but are flagged so the UI can note the
@@ -2859,6 +2919,153 @@
     return "partial";
   }
 
+  // __ANALYTICS_START__
+  // Pure, DOM/storage-free analytics over an array of WorksheetAnalysis rows
+  // (already fetched & student-scoped by the caller). Self-contained so tests
+  // can slice this block and eval it standalone.
+  function anOutcome(a) {            // local copy of attemptOutcome (keeps block self-contained)
+    const aw = a.marksAwarded, av = a.marksAvailable;
+    if (aw == null || av == null || av <= 0) return "unmarked";
+    if (aw >= av) return "correct";
+    if (aw <= 0) return "incorrect";
+    return "partial";
+  }
+  // One item per attempt across all worksheets, carrying worksheet-level
+  // createdAt/subject down onto each attempt.
+  function flattenAttempts(rows) {
+    const out = [];
+    (rows || []).forEach((r) => {
+      const createdAt = r.createdAt;
+      const subject = r.overall && r.overall.subject;
+      (r.attempts || []).forEach((a) => {
+        out.push({
+          createdAt: createdAt,
+          subject: subject,
+          topic: a.topic || "general",
+          complexity: a.complexity,
+          outcome: anOutcome(a),
+          errorType: a.errorType,
+          supportLevel: a.supportLevel,
+          parentApproved: !!a.parentApproved,
+          marksAwarded: a.marksAwarded,
+          marksAvailable: a.marksAvailable,
+        });
+      });
+    });
+    return out;
+  }
+  // Per-topic mastery, marks-aware, with a per-worksheet pct series over time.
+  function topicMasteryOverTime(rows, opts) {
+    opts = opts || {};
+    const topN = (opts.topN === undefined) ? 6 : opts.topN;
+    const flat = flattenAttempts(rows);
+    const groups = {};
+    flat.forEach((a) => {
+      (groups[a.topic] || (groups[a.topic] = { topic: a.topic, items: [] })).items.push(a);
+    });
+    const result = Object.keys(groups).map((topic) => {
+      const items = groups[topic].items;
+      let approved = 0, correct = 0, partial = 0, incorrect = 0, sumAw = 0, sumAv = 0;
+      const buckets = {};
+      items.forEach((a) => {
+        if (a.parentApproved) approved++;
+        if (a.outcome === "correct") correct++;
+        else if (a.outcome === "partial") partial++;
+        else if (a.outcome === "incorrect") incorrect++;
+        if (a.marksAvailable > 0) {
+          sumAw += a.marksAwarded || 0;
+          sumAv += a.marksAvailable;
+          const b = buckets[a.createdAt] || (buckets[a.createdAt] = { t: a.createdAt, aw: 0, av: 0 });
+          b.aw += a.marksAwarded || 0;
+          b.av += a.marksAvailable;
+        }
+      });
+      const pct = sumAv > 0 ? Math.round((sumAw / sumAv) * 100) : null;
+      const series = Object.keys(buckets)
+        .map((k) => buckets[k])
+        .filter((b) => b.av > 0)
+        .sort((x, y) => (x.t || 0) - (y.t || 0))
+        .map((b) => ({ t: b.t, pct: Math.round((b.aw / b.av) * 100) }));
+      const firstPct = series.length ? series[0].pct : null;
+      const lastPct = series.length ? series[series.length - 1].pct : null;
+      const delta = series.length >= 2 ? lastPct - firstPct : null;
+      return {
+        topic: topic, total: items.length, approved: approved,
+        correct: correct, partial: partial, incorrect: incorrect,
+        pct: pct, firstPct: firstPct, lastPct: lastPct, delta: delta, series: series,
+      };
+    });
+    result.sort((a, b) => b.total - a.total);
+    return (typeof topN === "number" && topN > 0) ? result.slice(0, topN) : result;
+  }
+  // Overall accuracy + estimated complexity, one point per worksheet ascending.
+  function accuracyComplexityTrend(rows) {
+    const list = (rows || []).slice().sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+    return list.map((r) => {
+      const attempts = r.attempts || [];
+      let scorePct = (r.overall && r.overall.score != null) ? r.overall.score : null;
+      if (scorePct == null) {
+        let aw = 0, av = 0;
+        attempts.forEach((a) => { if (a.marksAvailable > 0) { aw += a.marksAwarded || 0; av += a.marksAvailable; } });
+        scorePct = av > 0 ? Math.round((aw / av) * 100) : null;
+      }
+      let avgComplexity = (r.overall && r.overall.avgComplexity != null) ? r.overall.avgComplexity : null;
+      if (avgComplexity == null) {
+        const cx = attempts.map((a) => a.complexity).filter((c) => c);
+        avgComplexity = cx.length ? cx.reduce((s, c) => s + c, 0) / cx.length : null;
+      }
+      let approved = 0;
+      attempts.forEach((a) => { if (a.parentApproved) approved++; });
+      return { t: r.createdAt, scorePct: scorePct, avgComplexity: avgComplexity, attempted: attempts.length, approved: approved };
+    });
+  }
+  // Error-type evolution: earlier half vs recent half (by attempt index).
+  function errorPatternEvolution(rows, opts) {
+    const flat = flattenAttempts(rows)
+      .filter((a) => (a.outcome === "incorrect" || a.outcome === "partial") && a.errorType)
+      .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+    if (!flat.length) return [];
+    const mid = Math.floor(flat.length / 2);
+    const earlier = flat.slice(0, mid);
+    const recent = flat.slice(mid);
+    const groups = {};
+    flat.forEach((a) => { (groups[a.errorType] || (groups[a.errorType] = { key: a.errorType, total: 0, earlierCount: 0, recentCount: 0 })).total++; });
+    earlier.forEach((a) => { groups[a.errorType].earlierCount++; });
+    recent.forEach((a) => { groups[a.errorType].recentCount++; });
+    const result = Object.keys(groups).map((k) => {
+      const g = groups[k];
+      const trend = g.recentCount > g.earlierCount ? "rising" : g.recentCount < g.earlierCount ? "fading" : "steady";
+      return { key: g.key, total: g.total, recentCount: g.recentCount, earlierCount: g.earlierCount, trend: trend };
+    });
+    result.sort((a, b) => b.total - a.total);
+    return result;
+  }
+  // Growing independence: per-worksheet % of recorded support that was "on her own".
+  function independenceTrend(rows) {
+    const list = (rows || []).slice().sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+    const series = [];
+    list.forEach((r) => {
+      const withSupport = (r.attempts || []).filter((a) => a.supportLevel);
+      if (!withSupport.length) return;
+      const indep = withSupport.filter((a) => a.supportLevel === "independent").length;
+      series.push({ t: r.createdAt, independentPct: Math.round((indep / withSupport.length) * 100) });
+    });
+    const firstPct = series.length ? series[0].independentPct : null;
+    const lastPct = series.length ? series[series.length - 1].independentPct : null;
+    const delta = series.length >= 2 ? lastPct - firstPct : null;
+    let direction = null;
+    if (delta != null) direction = delta > 0 ? "rising" : delta < 0 ? "easing" : "steady";
+    return { series: series, firstPct: firstPct, lastPct: lastPct, delta: delta, direction: direction };
+  }
+  // Approved vs unconfirmed attempt counts across all worksheets.
+  function approvedVsUnconfirmed(rows) {
+    const flat = flattenAttempts(rows);
+    let approved = 0;
+    flat.forEach((a) => { if (a.parentApproved) approved++; });
+    return { approved: approved, unconfirmed: flat.length - approved, total: flat.length };
+  }
+  // __ANALYTICS_END__
+
   // Working draft during a capture→review session (before it is saved).
   let anDraft = null;
 
@@ -3248,62 +3455,84 @@
     }
   }
 
-  // ---- local insights (offline, evidence-only; only APPROVED attempts count) ----
+  // ---- local insights (offline, evidence-only; a summary of recorded results) ----
   // These are "your recorded results, summarised" — NOT AI analysis. Every string
   // is count/time-bounded and free of deficit / identity / destiny language.
+  // Counts ALL attempted questions, clearly labelling approved vs unconfirmed.
   async function renderAnalyzerInsights() {
     const el = $("an-insights");
     if (!el) return;
     const rows = await EduStore.getAnalyses();
-    const approved = [];
-    rows.forEach((r) => (r.attempts || []).forEach((a) => { if (a.parentApproved) approved.push(Object.assign({ _subject: r.overall && r.overall.subject }, a)); }));
-    if (!approved.length) {
-      el.innerHTML = '<div class="card an-insights"><p class="hint">Once you approve a few questions, a summary of your recorded results appears here. 🌱</p></div>';
+    const counts = approvedVsUnconfirmed(rows);
+    if (!counts.total) {
+      el.innerHTML = '<div class="card an-insights"><p class="hint">Once you scan a worksheet, a summary of your recorded results appears here. 🌱</p></div>';
       return;
     }
-    const lines = [];
-    // Per-topic "doing well / worth more practice" (partial-mark aware).
-    const byTopic = {};
-    approved.forEach((a) => {
-      const key = a.topic || "general";
-      const o = byTopic[key] || (byTopic[key] = { got: 0, max: 0, n: 0 });
-      if (a.marksAvailable > 0) { o.got += a.marksAwarded || 0; o.max += a.marksAvailable; }
-      o.n += 1;
-    });
-    Object.keys(byTopic).forEach((topic) => {
-      const o = byTopic[topic];
-      if (o.max <= 0) return;
-      const pct = Math.round((o.got / o.max) * 100);
-      const label = topic === "general" ? "these questions" : topic;
-      if (pct >= 80) lines.push("You're doing well on " + esc(label) + " — " + pct + "% recorded so far. 🌟");
-      else lines.push(esc(label.charAt(0).toUpperCase() + label.slice(1)) + " is worth a little more practice (" + pct + "% recorded). 💪");
-    });
-    // Complexity trend across worksheets (labelled "estimated").
-    const withCx = rows.filter((r) => r.overall && r.overall.avgComplexity != null)
-      .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)).map((r) => r.overall.avgComplexity);
-    let spark = "";
-    if (withCx.length >= 2) {
-      const first = withCx[0], last = withCx[withCx.length - 1];
-      const dir = last > first ? "rising" : last < first ? "easing" : "steady";
-      spark = '<p class="hint">Estimated challenge level is <b>' + dir + "</b> across " + withCx.length + " worksheets (" + first + " → " + last + "). 📈</p>";
+    const trend = accuracyComplexityTrend(rows);
+    const allTopics = topicMasteryOverTime(rows, { topN: null });
+    const topics = allTopics.slice(0, 6);
+    const moreCount = allTopics.length - topics.length;
+    const errs = errorPatternEvolution(rows);
+    const indep = independenceTrend(rows);
+
+    const parts = [];
+    // 1. Banner — approved vs unconfirmed.
+    const qWord = counts.total === 1 ? "question" : "questions";
+    parts.push('<p class="an-banner">Based on ' + counts.total + " recorded " + qWord +
+      " — " + counts.approved + " confirmed by you. 💛</p>");
+    // 2. Progress over time (canvas injected here; drawn after innerHTML is set).
+    parts.push("<h3>Progress over time</h3>");
+    parts.push('<canvas id="an-trend" class="an-trend"></canvas>');
+    if (trend.length < 2) parts.push('<p class="hint">Scan a few more worksheets to see the trend build. 🌱</p>');
+    // 3. Topic mastery — a chip per topic with a delta arrow + a warm narrative line.
+    if (topics.length) {
+      parts.push("<h4>Topic mastery</h4>");
+      const chips = topics.map((tp) => {
+        const label = tp.topic === "general" ? "these questions" : tp.topic;
+        let arrow, cls;
+        if (tp.delta != null && tp.delta > 0) { arrow = "▲"; cls = "an-delta-up"; }
+        else if (tp.delta != null && tp.delta < 0) { arrow = "▼"; cls = "an-delta-down"; }
+        else { arrow = "→"; cls = "an-delta-flat"; }
+        const pctTxt = tp.pct == null ? "—" : tp.pct + "%";
+        return '<span class="chip">' + esc(label) + " " + pctTxt +
+          ' <span class="' + cls + '">' + arrow + "</span>" +
+          '<span class="an-sub-count">(' + tp.total + " recorded · " + tp.approved + " confirmed)</span></span>";
+      }).join("");
+      parts.push('<div class="an-topic-row">' + chips + "</div>");
+      if (moreCount > 0) parts.push('<p class="hint">…and ' + moreCount + " more topic" + (moreCount === 1 ? "" : "s") + " recorded.</p>");
+      const narr = topics.filter((tp) => tp.pct != null).map((tp) => {
+        const label = tp.topic === "general" ? "these questions" : tp.topic;
+        const cap = label.charAt(0).toUpperCase() + label.slice(1);
+        return tp.pct >= 80
+          ? "<li>You're doing well on " + esc(label) + " — " + tp.pct + "% recorded. 🌟</li>"
+          : "<li>" + esc(cap) + " is worth a little more practice (" + tp.pct + "% recorded). 💪</li>";
+      }).join("");
+      if (narr) parts.push("<ul>" + narr + "</ul>");
     }
-    // Optional error-category note (evidence only).
-    const errCounts = {};
-    approved.forEach((a) => { if (a.errorType) errCounts[a.errorType] = (errCounts[a.errorType] || 0) + 1; });
-    const topErr = Object.keys(errCounts).sort((x, y) => errCounts[y] - errCounts[x])[0];
-    if (topErr) {
-      const lbl = (AN_ERROR_CATEGORIES.find((c) => c.key === topErr) || {}).label || topErr;
-      lines.push("Most noted so far: “" + esc(lbl) + "” (" + errCounts[topErr] + "). Something to chat about together. 💬");
+    // 4. Common mistakes — recurring vs fading.
+    if (errs.length) {
+      parts.push("<h4>Common mistakes</h4>");
+      const chips = errs.map((e) => {
+        const lbl = (AN_ERROR_CATEGORIES.find((c) => c.key === e.key) || {}).label || e.key;
+        const tag = e.trend === "fading" ? "↘ easing 🌱" : e.trend === "rising" ? "↗ recurring 💬" : "· steady";
+        return '<span class="chip">' + esc(lbl) + " " + e.total + " " + tag + "</span>";
+      }).join("");
+      parts.push('<div class="an-topic-row">' + chips + "</div>");
     }
-    // School evidence echo (record + show only; read-only, caveated — §6b).
-    let evidence = "";
-    const mockEvidence = rows.filter((r) => r.source === "mock" && (r.attempts || []).some((a) => a.parentApproved)).length;
-    if (mockEvidence) {
-      evidence = '<p class="hint">📎 ' + mockEvidence + " approved mock worksheet" + (mockEvidence === 1 ? "" : "s") +
-        " recorded as evidence. This is a record only — school readiness still comes from your Progress page.</p>";
+    // 5. Working independently.
+    if (indep.series.length) {
+      parts.push("<h4>Working independently</h4>");
+      if (indep.delta != null && indep.delta > 0) {
+        parts.push('<p class="hint">More on her own lately — ' + indep.firstPct + "% → " + indep.lastPct + "%. 🌟</p>");
+      } else if (indep.delta != null && indep.delta < 0) {
+        parts.push('<p class="hint">A little more support lately (' + indep.firstPct + "% → " + indep.lastPct + "%). That's fine — worth a chat. 💬</p>");
+      } else {
+        parts.push('<p class="hint">On her own about ' + indep.lastPct + "% of the time lately. 🌱</p>");
+      }
     }
-    el.innerHTML = '<div class="card an-insights"><h3>Your recorded results, summarised</h3>' +
-      "<ul>" + lines.map((l) => "<li>" + l + "</li>").join("") + "</ul>" + spark + evidence + "</div>";
+    el.innerHTML = '<div class="card an-insights">' + parts.join("") + "</div>";
+    const cv = $("an-trend");
+    if (cv) drawTrendChart(cv, trend.map((p) => ({ t: p.t, pct: p.scorePct, cx: p.avgComplexity })), { label: "Accuracy over time" });
   }
   // ========== END HOMEWORK ANALYZER ==========
 
