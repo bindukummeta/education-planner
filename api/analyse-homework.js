@@ -165,7 +165,7 @@ module.exports = async (req, res) => {
       },
       body: JSON.stringify({
         model,
-        max_tokens: 1500,
+        max_tokens: 4096,
         // Structured Outputs (GA output_config.format, no beta header) — constrains
         // decoding so the response is guaranteed schema-valid JSON.
         output_config: { format: { type: "json_schema", schema: RESPONSE_SCHEMA } },
@@ -191,15 +191,27 @@ module.exports = async (req, res) => {
       return res.status(502).json({ error: "Analysis service error: " + detail, status: upstream.status });
     }
     const data = await upstream.json();
+    // Structured Outputs returns the JSON as text in content[0].text, but be
+    // tolerant: join every content part that carries a string `text`.
     const text = Array.isArray(data.content)
-      ? data.content.filter(p => p && p.type === "text").map(p => p.text).join("")
+      ? data.content.filter(p => p && typeof p.text === "string").map(p => p.text).join("")
       : "";
+    const stop = data && data.stop_reason;
+    if (!text.trim()) {
+      // No JSON at all — surface why (e.g. refusal, or an empty response) so it's
+      // diagnosable instead of a generic "invalid JSON".
+      return res.status(502).json({ error: "The analysis came back empty" + (stop ? " (stop reason: " + stop + ")" : "") + ". Please try a clearer photo." });
+    }
     let parsed;
     try {
       const cleaned = text.replace(/```json/gi, "").replace(/```/g, "").trim();
       parsed = JSON.parse(cleaned);
     } catch (e) {
-      return res.status(502).json({ error: "Could not read the analysis (invalid JSON from model)" });
+      // A truncated response (hit max_tokens) is the usual cause of invalid JSON.
+      const hint = stop === "max_tokens"
+        ? " The response was too long and got cut off — try a worksheet with fewer questions."
+        : "";
+      return res.status(502).json({ error: "Could not read the analysis (invalid JSON from model)." + hint });
     }
     return res.status(200).json(normalizePayload(parsed, model, subject));
   } catch (err) {
