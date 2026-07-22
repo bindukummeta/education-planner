@@ -75,7 +75,7 @@ const RESPONSE_SCHEMA = {
           correctness: { type: "string", enum: CORRECTNESS },
           marksAwarded: { type: ["number", "null"] },
           marksAvailable: { type: ["number", "null"] },
-          errorType: { type: ["string", "null"], enum: ERROR_TYPES.concat([null]) },
+          errorType: { anyOf: [{ type: "string", enum: ERROR_TYPES }, { type: "null" }] },
           subskill: { type: ["string", "null"] },
           topic: { type: ["string", "null"] },
           reasoningSummary: { type: "string" },
