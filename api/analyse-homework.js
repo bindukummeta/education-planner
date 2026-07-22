@@ -165,7 +165,13 @@ module.exports = async (req, res) => {
       },
       body: JSON.stringify({
         model,
-        max_tokens: 4096,
+        max_tokens: 8192,
+        // Claude Sonnet 5 runs adaptive thinking by default, which shares the
+        // max_tokens budget with the answer — a tight budget gets spent on thinking
+        // and truncates the JSON (stop_reason: max_tokens). This is a structured
+        // extraction task, not deep reasoning, so disable thinking to reserve the
+        // whole budget for the output.
+        thinking: { type: "disabled" },
         // Structured Outputs (GA output_config.format, no beta header) — constrains
         // decoding so the response is guaranteed schema-valid JSON.
         output_config: { format: { type: "json_schema", schema: RESPONSE_SCHEMA } },
