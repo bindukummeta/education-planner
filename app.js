@@ -1069,7 +1069,7 @@
   // ============ PLAY & CREATE ============
   const PLAY_GAMES = [
     { title: "Vocabulary Quest",      icon: "📖", difficulty: "Easy",   minutes: 10, skillSubject: "vr",             skillsText: "Builds the vocabulary that powers verbal reasoning." },
-    { title: "Times Table Sprint",    icon: "✖️", difficulty: "Medium", minutes: 5,  skillSubject: "maths",          skillsText: "Fast recall of times tables for mental maths." },
+    { title: "Number Ninja",          icon: "🥷", difficulty: "Medium", minutes: 8,  skillSubject: "maths",          skillsText: "Mental maths across +, −, ×, ÷, BODMAS and negatives." },
     { title: "Pattern Detective",     icon: "🧩", difficulty: "Medium", minutes: 12, skillSubject: "nvr",            skillsText: "Spot sequences and shapes — core non-verbal reasoning." },
     { title: "Spelling Wizard",       icon: "🔤", difficulty: "Easy",   minutes: 8,  skillSubject: "english",        skillsText: "Tricky spellings, one spell at a time." },
     { title: "Reading Treasure Hunt", icon: "🗺️", difficulty: "Hard",   minutes: 15, skillSubject: "english",        skillsText: "Comprehension clues hidden in a story." },
@@ -1172,7 +1172,7 @@
 
   // Each real game maps its PLAY_GAMES title to a launcher; others fall back to the
   // "coming soon" placeholder. Function declarations are hoisted, so order is fine.
-  const GAME_LAUNCHERS = { "Vocabulary Quest": openVocabQuest, "Spelling Wizard": openSpellWizard };
+  const GAME_LAUNCHERS = { "Vocabulary Quest": openVocabQuest, "Spelling Wizard": openSpellWizard, "Number Ninja": openNumberNinja };
 
   // ---- focus quest (encouraging framing — NEVER "weakest subject") ----
   // Internally we still find the lowest recent average (reusing subjectRecentAvg,
@@ -1633,6 +1633,201 @@
           note: "Played Vocabulary Quest", blobId: null,
         });
         // Close the dialog automatically once the round is saved.
+        closeModal();
+      });
+    }
+  }
+
+  // ---- Number Ninja game (mental arithmetic, 11+ level) ----
+  // Mixed-operation mental maths: addition, subtraction, multiplication (as
+  // reasoning — e.g. 23 × 4 — NOT a times-tables drill), division, order of
+  // operations (BODMAS) and negative numbers. Questions are GENERATED, not a
+  // hand-authored bank, so there is endless variety. Mastery is tracked per
+  // CATEGORY (not per question) so weak operations resurface more often. The
+  // generator is pure given an rng, so it is unit-testable like Vocab Quest.
+  const NINJA_ROUND_LEN = 10; // questions per round
+  const NINJA_MASTER_AT = 6;  // correct-in-category before it counts as "mastered"
+
+  // The six categories. `label` is shown on the results breakdown. Order is stable.
+  const NINJA_CATS = ["add", "subtract", "multiply", "divide", "bodmas", "negatives"];
+  const NINJA_CAT_LABEL = {
+    add: "Addition", subtract: "Subtraction", multiply: "Multiplying",
+    divide: "Division", bodmas: "Order of operations", negatives: "Negative numbers",
+  };
+
+  // Integer in [lo, hi] inclusive from the rng (pure given rng).
+  function ninjaInt(rng, lo, hi) { return lo + Math.floor(rng() * (hi - lo + 1)); }
+
+  // Weight a category from its mastery record { seen, correct }: brand-new /
+  // struggling categories weigh most; each correct answer lowers it; once mastered
+  // the weight drops sharply but never to zero (mirrors vocabWeight). Keeps weak
+  // operations appearing more often without ever silencing mastered ones.
+  function ninjaWeight(rec) {
+    const correct = (rec && rec.correct) || 0;
+    if (correct >= NINJA_MASTER_AT) return 0.4;
+    return 10 - correct * 1.4; // 10 (new) → ~2.6 (5 correct)
+  }
+
+  // Weighted pick of a category key (pure given rng).
+  function pickNinjaCat(mastery, rng) {
+    mastery = mastery || {};
+    let total = 0;
+    for (const c of NINJA_CATS) total += ninjaWeight(mastery[c]);
+    let r = rng() * total;
+    for (const c of NINJA_CATS) { r -= ninjaWeight(mastery[c]); if (r <= 0) return c; }
+    return NINJA_CATS[NINJA_CATS.length - 1];
+  }
+
+  // Build a single question for a category: { cat, prompt, answer, options[4] }.
+  // Multiplication uses a 2-digit × 1-digit shape (reasoning, not table recall);
+  // division is exact (whole-number answer); BODMAS covers × / + − precedence;
+  // negatives cover subtraction that crosses zero. Distractors are near-misses so
+  // options are plausible. Pure given rng.
+  function buildNinjaQuestion(cat, rng) {
+    let a, b, c, prompt, answer;
+    switch (cat) {
+      case "add":
+        a = ninjaInt(rng, 25, 199); b = ninjaInt(rng, 25, 199);
+        prompt = a + " + " + b; answer = a + b; break;
+      case "subtract":
+        a = ninjaInt(rng, 50, 199); b = ninjaInt(rng, 10, a);
+        prompt = a + " − " + b; answer = a - b; break;
+      case "multiply":
+        a = ninjaInt(rng, 12, 39); b = ninjaInt(rng, 3, 9);
+        prompt = a + " × " + b; answer = a * b; break;
+      case "divide":
+        b = ninjaInt(rng, 3, 12); answer = ninjaInt(rng, 3, 12); a = b * answer;
+        prompt = a + " ÷ " + b; break;
+      case "negatives":
+        a = ninjaInt(rng, 2, 40); b = ninjaInt(rng, a + 1, a + 40);
+        prompt = a + " − " + b; answer = a - b; break;
+      case "bodmas":
+      default:
+        cat = "bodmas";
+        a = ninjaInt(rng, 2, 12); b = ninjaInt(rng, 2, 9); c = ninjaInt(rng, 2, 20);
+        prompt = c + " + " + a + " × " + b; answer = c + a * b; break;
+    }
+    return { cat: cat, prompt: prompt, answer: answer, options: ninjaOptions(answer, rng) };
+  }
+
+  // Four unique options including the answer, shuffled. Distractors are small
+  // offsets around the answer (never negative-of-a-positive nonsense). Pure given rng.
+  function ninjaOptions(answer, rng) {
+    const set = new Set([answer]);
+    const offsets = shuffleArr([-10, -2, -1, 1, 2, 3, 5, 10, 20], rng);
+    let oi = 0;
+    while (set.size < 4 && oi < offsets.length) { set.add(answer + offsets[oi]); oi++; }
+    let extra = 1;
+    while (set.size < 4) { set.add(answer + 100 + extra); extra++; }
+    return shuffleArr(Array.from(set), rng);
+  }
+
+  // Build a round of `count` questions, choosing categories with mastery weighting
+  // (when provided) so weak operations appear more often. Pure given rng.
+  function buildNinjaRound(count, rng, mastery) {
+    rng = rng || Math.random;
+    const out = [];
+    for (let i = 0; i < count; i++) {
+      const cat = mastery ? pickNinjaCat(mastery, rng) : NINJA_CATS[ninjaInt(rng, 0, NINJA_CATS.length - 1)];
+      out.push(buildNinjaQuestion(cat, rng));
+    }
+    return out;
+  }
+
+  // Per-student category mastery in meta (persists via backup/sync like the others).
+  async function loadNinjaMastery() {
+    const sid = await EduStore.getActiveStudentId();
+    const map = await EduStore.getMeta("ninjaMastery." + sid);
+    return { key: "ninjaMastery." + sid, map: map || {} };
+  }
+
+  async function openNumberNinja(game) {
+    const { key: masteryKey, map: mastery } = await loadNinjaMastery();
+    const round = buildNinjaRound(NINJA_ROUND_LEN, Math.random, mastery);
+    let idx = 0, score = 0, answered = false;
+    openModal(game.title, '<div id="vq"></div>', { large: true });
+    renderQuestion();
+
+    function renderQuestion() {
+      answered = false;
+      const q = round[idx];
+      const optsHTML = q.options.map((opt, i) =>
+        '<button type="button" class="vq-option" data-i="' + i + '">' + esc(String(opt)) + "</button>").join("");
+      $("vq").innerHTML =
+        '<div class="vq-progress">Question ' + (idx + 1) + " of " + round.length + " · Score " + score + "</div>" +
+        '<div class="vq-word">' + esc(q.prompt) + "</div>" +
+        '<p class="hint">' + esc(NINJA_CAT_LABEL[q.cat] || "Solve it") + " — pick the answer</p>" +
+        '<div class="vq-options">' + optsHTML + "</div>" +
+        '<button type="button" id="vq-idk" class="vq-idk">🤔 I don\'t know</button>' +
+        '<div class="vq-feedback" id="vq-feedback"></div>' +
+        '<div class="form-actions"><button type="button" id="vq-next" class="btn-primary" disabled>Next</button></div>';
+      $("vq").querySelectorAll(".vq-option").forEach((b) =>
+        b.addEventListener("click", () => choose(parseInt(b.dataset.i, 10))));
+      $("vq-idk").addEventListener("click", () => choose(-1));
+      $("vq-next").addEventListener("click", next);
+    }
+
+    // i is the chosen option index, or -1 for "I don't know".
+    function choose(i) {
+      if (answered) return;
+      answered = true;
+      const q = round[idx];
+      const dontKnow = i === -1;
+      const correct = !dontKnow && q.options[i] === q.answer;
+      if (correct) score++;
+      // Record this category's outcome so weak operations resurface more often.
+      const rec = mastery[q.cat] || { seen: 0, correct: 0 };
+      rec.seen++;
+      if (correct) rec.correct++;
+      mastery[q.cat] = rec;
+      EduStore.setMeta(masteryKey, mastery);
+      $("vq").querySelectorAll(".vq-option").forEach((b) => {
+        const opt = q.options[parseInt(b.dataset.i, 10)];
+        b.disabled = true;
+        if (opt === q.answer) b.classList.add("vq-correct");
+        else if (parseInt(b.dataset.i, 10) === i) b.classList.add("vq-wrong");
+      });
+      $("vq-idk").disabled = true;
+      const fb = $("vq-feedback");
+      fb.textContent = correct ? "✓ Correct!"
+        : dontKnow ? "That's okay! The answer is " + q.answer + "."
+        : "✗ The answer is " + q.answer + ".";
+      fb.className = "vq-feedback " + (correct ? "vq-fb-ok" : "vq-fb-no");
+      const nextBtn = $("vq-next");
+      nextBtn.disabled = false;
+      nextBtn.textContent = idx === round.length - 1 ? "See results" : "Next";
+      if (correct) {
+        const at = idx;
+        setTimeout(() => { if (at === idx && answered) next(); }, 800);
+      } else {
+        nextBtn.focus();
+      }
+    }
+
+    function next() {
+      if (idx < round.length - 1) { idx++; renderQuestion(); }
+      else renderResults();
+    }
+
+    function renderResults() {
+      const pct = Math.round((score / round.length) * 100);
+      const msg = pct >= 80 ? "Amazing work! 🌟"
+        : pct >= 50 ? "Great effort — keep going! 💪"
+        : "Good try — practice makes perfect! 🌱";
+      $("vq").innerHTML =
+        '<div class="vq-result"><div class="vq-score">' + score + " / " + round.length + "</div>" +
+        '<div class="vq-pct">' + pct + "%</div><p>" + msg + "</p></div>" +
+        '<div class="form-actions">' +
+        '<button type="button" id="vq-again" class="btn-primary">Play again</button>' +
+        '<button type="button" id="vq-log" class="btn-secondary">Save to progress</button></div>';
+      $("vq-again").addEventListener("click", () => openNumberNinja(game));
+      $("vq-log").addEventListener("click", async () => {
+        $("vq-log").disabled = true;
+        await EduStore.addEntry({
+          date: todayISO(), subject: "maths", topic: "Number Ninja", difficulty: "",
+          scoreRaw: score, scoreMax: round.length, scorePct: pct,
+          note: "Played Number Ninja", blobId: null,
+        });
         closeModal();
       });
     }
