@@ -166,7 +166,6 @@ module.exports = async (req, res) => {
       body: JSON.stringify({
         model,
         max_tokens: 1500,
-        temperature: 0,
         // Structured Outputs (GA output_config.format, no beta header) — constrains
         // decoding so the response is guaranteed schema-valid JSON.
         output_config: { format: { type: "json_schema", schema: RESPONSE_SCHEMA } },
