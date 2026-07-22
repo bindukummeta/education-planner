@@ -2586,7 +2586,14 @@
     a.confidence = (typeof ai.confidence === "number") ? ai.confidence : null;
     a.needsReview = (ai.correctness === "unclear") ? true : (ai.needsReview !== false);
     a.reasoningSummary = softenSummary(ai.reasoningSummary || "");
-    a.parentApproved = false; // always
+    // Auto-approve confident, clearly-judged questions so the parent only has to
+    // review the low-confidence / unclear ones. A question counts as confident when
+    // the AI gave a definite right/wrong verdict, didn't flag it for review, and
+    // scored its confidence at 0.6+. Everything else stays unapproved (flagged).
+    const clearVerdict = ai.correctness === "correct" || ai.correctness === "incorrect";
+    const confident = clearVerdict && a.needsReview === false && (a.confidence == null || a.confidence >= 0.6);
+    a.parentApproved = confident;
+    if (confident) a.needsReview = false;
     return a;
   }
 
@@ -2991,6 +2998,10 @@
       const showErr = outcome === "incorrect" || outcome === "partial";
       const needsFlag = a.needsReview === true || (a.confidence != null && a.confidence < 0.6);
       const badge = needsFlag ? '<span class="an-badge">Please check</span>' : "";
+      // Show the AI's right/wrong judgement at a glance by highlighting the
+      // matching button; the parent can still tap the other one to override.
+      const tickActive = outcome === "correct" ? " active" : "";
+      const crossActive = outcome === "incorrect" ? " active" : "";
       const aiNote = a.reasoningSummary ? '<p class="an-ai-note">' + esc(a.reasoningSummary) + "</p>" : "";
       const answers = enhanced
         ? '<div class="an-answers">' +
@@ -3009,8 +3020,8 @@
         answers +
         '<div class="an-q-controls">' +
         '<span class="an-mark-label">How did she do?</span>' +
-        '<button type="button" class="an-tick" title="Got it right (full marks)">✓ Right</button>' +
-        '<button type="button" class="an-cross" title="Got it wrong (no marks)">✗ Wrong</button>' +
+        '<button type="button" class="an-tick' + tickActive + '" title="Got it right (full marks)">✓ Right</button>' +
+        '<button type="button" class="an-cross' + crossActive + '" title="Got it wrong (no marks)">✗ Wrong</button>' +
         '<span class="an-marks">or marks: <input class="an-q-aw" type="number" min="0" step="0.5" placeholder="got" value="' + (a.marksAwarded == null ? "" : a.marksAwarded) + '" /> out of <input class="an-q-av" type="number" min="1" step="0.5" placeholder="max" value="' + (a.marksAvailable == null ? "" : a.marksAvailable) + '" /></span>' +
         "</div>" +
         '<details class="an-detail">' +

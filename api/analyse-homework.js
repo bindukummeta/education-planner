@@ -17,7 +17,11 @@ WHAT TO EXTRACT
 For each question you can see on the worksheet, extract:
 - questionText: the printed question text, copied verbatim as printed.
 - studentAnswer: the child's visible handwritten answer if you can read it clearly; otherwise null.
-- correctness: one of exactly "correct", "incorrect", "partial", or "unclear".
+- expectedAnswer: work out the correct answer to the question yourself and give it here (a short
+  value, e.g. "42" or "3/4"). Only use null if the question genuinely has no single correct answer.
+- correctness: compare the child's studentAnswer to the expectedAnswer you worked out and judge it as
+  exactly one of "correct", "incorrect", "partial", or "unclear". Use "unclear" only when you cannot
+  read the child's answer at all.
 - marksAvailable and marksAwarded: only if they are clearly determinable from the sheet; otherwise null.
 - errorType: if the answer is not fully correct, suggest ONE of exactly these values, else null:
   "concept", "calculation", "instruction", "incomplete", "time", "skipped", "other".

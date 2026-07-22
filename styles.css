@@ -911,6 +911,9 @@ body.no-tabbar .tabbar { display: none; }
 .an-tick, .an-cross { padding: 7px 12px; border-radius: var(--r-sm); border: 1px solid var(--border-strong); background: var(--card); font-size: 14px; font-weight: 700; cursor: pointer; }
 .an-tick:hover { color: var(--rag-green); border-color: var(--rag-green); }
 .an-cross:hover { color: var(--rag-red); border-color: var(--rag-red); }
+/* The AI's pre-selected verdict is shown filled; the parent can still override. */
+.an-tick.active { background: var(--rag-green); border-color: var(--rag-green); color: #fff; }
+.an-cross.active { background: var(--rag-red); border-color: var(--rag-red); color: #fff; }
 /* Optional "Add detail" collapsible section per question */
 .an-detail { margin: 8px 0; }
 .an-detail > summary { cursor: pointer; font-size: 13px; font-weight: 700; color: var(--accent, #2a6df4); list-style: none; padding: 4px 0; }
