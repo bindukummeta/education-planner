@@ -31,6 +31,24 @@ function buildPrompt(snapshot) {
   ].join("\n");
 }
 
+function buildKidPrompt(snapshot) {
+  return [
+    "You are a warm, playful learning coach writing DIRECTLY to a child of about",
+    "ten years old (use 'you'). Base your message ONLY on the derived snapshot",
+    "below — do not invent data. Write at most 120 words: a short friendly hello,",
+    "2-3 concrete FUN next steps they can do (mention practising with the games),",
+    "and one cheer at the end.",
+    "",
+    "STRICT RULES: Never use deficit, ability, or identity words such as weak,",
+    "weakest, worst, bad, poor, behind, failing, fail, lazy, slow, stupid, dumb,",
+    "genius, gifted, or talented. Never say which subject is weakest and never",
+    "compare them to anyone else. Only positive, encouraging, adventurous wording.",
+    "",
+    "Progress snapshot:",
+    JSON.stringify(snapshot, null, 2),
+  ].join("\n");
+}
+
 async function callClaude(apiKey, model, prompt) {
   const res = await fetch(ANTHROPIC_URL, {
     method: "POST",
@@ -74,9 +92,11 @@ module.exports = async (req, res) => {
     return;
   }
 
+  const audience = (body && body.audience) === "child" ? "child" : "parent";
   const model = process.env.ANTHROPIC_COACH_MODEL || DEFAULT_MODEL;
   try {
-    const advice = await callClaude(apiKey, model, buildPrompt(snapshot));
+    const prompt = audience === "child" ? buildKidPrompt(snapshot) : buildPrompt(snapshot);
+    const advice = await callClaude(apiKey, model, prompt);
     res.status(200).json({ advice });
   } catch (err) {
     res.status(500).json({ error: err.message });

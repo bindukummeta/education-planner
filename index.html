@@ -371,7 +371,12 @@
     <section id="view-coach" class="view hidden">
       <div class="card coach-panel">
         <h2>🎯 AI Coach</h2>
-        <p class="hint">Get study advice based on her recent progress. Needs an internet connection.</p>
+        <div class="coach-mode" id="coach-mode">
+          <button type="button" data-aud="parent" class="active">For me (parent)</button>
+          <button type="button" data-aud="child">My Coach 🌟</button>
+        </div>
+        <p id="coach-hint" class="hint">Get study advice based on her recent progress. Needs an internet connection.</p>
+        <div id="coach-kid-tips" class="coach-kid-tips" hidden></div>
         <div class="form-actions"><button type="button" id="coach-run" class="btn-primary">Get advice</button></div>
         <p id="coach-status" class="hint"></p>
         <div id="coach-output"></div>

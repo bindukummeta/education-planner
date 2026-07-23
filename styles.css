@@ -573,6 +573,20 @@ body.no-tabbar .tabbar { display: none; }
 
 /* ---- Coach ---- */
 .coach-panel #coach-output { white-space: pre-wrap; line-height: 1.55; margin-top: 10px; }
+/* ---- Coach: audience toggle + kid tips ---- */
+.coach-mode { display: inline-flex; gap: 4px; padding: 4px; margin: 4px 0 12px;
+  background: var(--card-2); border: 1px solid var(--border-strong); border-radius: var(--r-pill); }
+.coach-mode button { border: 0; background: transparent; color: var(--muted);
+  padding: 6px 14px; border-radius: var(--r-pill); font-weight: 700; font-size: 13px; cursor: pointer; }
+.coach-mode button.active { background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+  color: #fff; box-shadow: var(--shadow-sm); }
+.coach-kid-tips { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
+.coach-kid-head { font-weight: 800; }
+.coach-kid-card { display: flex; align-items: center; gap: 10px; padding: 12px;
+  background: var(--card-2); border: 1px solid var(--border); border-radius: var(--r-md); }
+.coach-kid-card .ck-ico { font-size: 24px; flex: 0 0 auto; }
+.coach-kid-card .ck-line { flex: 1; min-width: 0; }
+.coach-kid-card .btn-primary { flex: 0 0 auto; padding: 6px 14px; }
 .spinner {
   display: inline-block;
   width: 14px; height: 14px;

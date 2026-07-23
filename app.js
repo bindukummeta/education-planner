@@ -12,6 +12,7 @@
   function normDifficulty(d) { return DIFFICULTY_ORDER[d] ? d : ""; }
 
   let activeSubject = "vr";
+  let coachAudience = "parent";
   let objectURLs = [];
 
   // ---- settings (localStorage) ----
@@ -1069,14 +1070,64 @@
   }
 
   // ============ AI COACH ============
-  function prepareCoach() {
-    // Reflect connectivity when the view is opened; don't auto-call the API.
-    const status = $("coach-status");
-    if (!navigator.onLine) {
-      status.textContent = "You're offline — connect to the internet to get advice.";
-    } else if (!status.textContent) {
-      status.textContent = "";
-    }
+  async function prepareCoach() {
+    var saved = await EduStore.getMeta("coach.audience");
+    coachAudience = (saved === "child") ? "child" : "parent";
+    applyCoachMode();
+    if (coachAudience === "child") await renderKidCoachTips();
+  }
+  function applyCoachMode() {
+    var kid = coachAudience === "child";
+    document.querySelectorAll("#coach-mode button").forEach(function (b) {
+      b.classList.toggle("active", b.getAttribute("data-aud") === coachAudience);
+    });
+    var tips = $("coach-kid-tips");
+    if (tips) tips.hidden = !kid;
+    var hint = $("coach-hint");
+    if (hint) hint.textContent = kid
+      ? "Your friendly coach with fun next steps. The games work offline; tap ✨ for a cheer (needs internet)."
+      : "Get study advice based on her recent progress. Needs an internet connection.";
+    var run = $("coach-run");
+    if (run) run.textContent = kid ? "✨ Get a cheer" : "Get advice";
+    var status = $("coach-status");
+    if (status && !navigator.onLine && !kid) status.textContent = "You're offline — connect to the internet to get advice.";
+    else if (status && kid) status.textContent = "";
+  }
+  async function renderKidCoachTips() {
+    var box = $("coach-kid-tips");
+    if (!box) return;
+    var vocab = await loadVocabMastery();
+    var ninja = await loadNinjaMastery();
+    var spell = await loadSpellMastery();
+    var focus = await focusSubject();
+    var summary = kidMasterySummary(vocab.map, ninja.map, spell.map,
+      { vocab: VOCAB_MASTER_AT, ninja: NINJA_MASTER_AT, spell: SPELL_MASTER_AT });
+    var steps = kidNextSteps(focus, summary, PLAY_GAMES, 3);
+    box.innerHTML = "";
+    var head = document.createElement("div");
+    head.className = "coach-kid-head";
+    head.textContent = focus ? focusPhrase(focus.label) : "🌟 Your next adventures";
+    box.appendChild(head);
+    steps.forEach(function (s) {
+      var g = PLAY_GAMES.find(function (x) { return x.title === s.gameTitle; });
+      var card = document.createElement("div");
+      card.className = "coach-kid-card";
+      card.innerHTML =
+        '<div class="ck-ico">' + s.icon + "</div>" +
+        '<div class="ck-line">' + esc(s.line) + "</div>";
+      var btn = document.createElement("button");
+      btn.className = "btn-primary";
+      btn.textContent = "▶ Play";
+      var launcher = GAME_LAUNCHERS[s.gameTitle];
+      btn.addEventListener("click", function () {
+        return launcher ? launcher(g) :
+          openModal(s.gameTitle,
+            "<p>" + esc((g && g.skillsText) || "") + "</p>" +
+            '<p class="hint">This game will be available soon. Check back after the next update!</p>');
+      });
+      card.appendChild(btn);
+      box.appendChild(card);
+    });
   }
   async function buildCoachSnapshot() {
     // Per-subject recent averages (any level) + best-available band.
@@ -1110,21 +1161,93 @@
     $("coach-run").disabled = true;
     try {
       const snapshot = await buildCoachSnapshot();
+      const payload = (coachAudience === "child")
+        ? { snapshot: snapshot, audience: "child" }
+        : { snapshot: snapshot };
       const res = await fetch("/api/coach", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ snapshot }),
+        body: JSON.stringify(payload),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
       status.textContent = "";
-      out.textContent = data.advice || "No advice returned.";
+      out.textContent = (coachAudience === "child")
+        ? softenSummary(data.advice || "") || "You're doing great — keep playing and practising! 🌟"
+        : (data.advice || "No advice returned.");
     } catch (err) {
       status.textContent = "Couldn't get advice: " + err.message;
     } finally {
       $("coach-run").disabled = false;
     }
   }
+
+  // __COACHKID_START__
+  // Pure, DOM/storage-free helpers for the child coach. Callers pass plain data
+  // (mastery maps already loaded, focus already resolved, games list) so this
+  // block can be sliced out and unit-tested standalone. NO EduStore/DOM access.
+  // Positive-only phrasing; MUST NOT emit any deficit/ability word.
+  var KID_CHEERS = [
+    "You're doing brilliantly — keep it up! 🌟",
+    "Every round makes your brain stronger! 💪",
+    "Look how far you've come — amazing! 🚀",
+  ];
+  // Per-game count of mastered vs still-practising items from a { [k]:{seen,correct} }
+  // map and a master-at threshold. masterAts = { vocab, ninja, spell }.
+  function kidMasterySummary(vocabMap, ninjaMap, spellMap, masterAts) {
+    masterAts = masterAts || {};
+    function tally(map, at) {
+      map = map || {}; at = at || 1;
+      var mastered = 0, practising = 0;
+      for (var k in map) {
+        if (!Object.prototype.hasOwnProperty.call(map, k)) continue;
+        var c = (map[k] && map[k].correct) || 0;
+        if (c >= at) mastered++; else practising++;
+      }
+      return { mastered: mastered, practising: practising };
+    }
+    return {
+      vocab: tally(vocabMap, masterAts.vocab),
+      ninja: tally(ninjaMap, masterAts.ninja),
+      spell: tally(spellMap, masterAts.spell),
+    };
+  }
+  // Map a game's skillSubject → the mastery bucket key it draws from.
+  function kidGameBucket(skillSubject) {
+    if (skillSubject === "vr") return "vocab";      // Vocabulary Quest
+    if (skillSubject === "maths") return "ninja";   // Number Ninja
+    if (skillSubject === "english") return "spell"; // Spelling Wizard
+    return null;                                     // no mastery signal yet
+  }
+  // Ordered, positive, game-linked suggestions. Prioritise the focus subject's
+  // game, then games with the most "practising" items. cap defaults to 3.
+  // focus = { subject } | null. Returns [{ gameTitle, icon, line }].
+  function kidNextSteps(focus, summary, games, cap) {
+    cap = cap || 3;
+    summary = summary || {};
+    var scored = (games || []).map(function (g) {
+      var bucket = kidGameBucket(g.skillSubject);
+      var practising = bucket && summary[bucket] ? summary[bucket].practising : 0;
+      var isFocus = !!(focus && g.skillSubject === focus.subject);
+      var score = (isFocus ? 1000 : 0) + practising;
+      return { g: g, score: score, isFocus: isFocus };
+    });
+    scored.sort(function (a, b) { return b.score - a.score; });
+    var out = [];
+    for (var i = 0; i < scored.length && out.length < cap; i++) {
+      var g = scored[i].g;
+      var line = scored[i].isFocus
+        ? "Time for an adventure — try a round of " + g.title + " " + g.icon
+        : "Try a round of " + g.title + " " + g.icon;
+      out.push({ gameTitle: g.title, icon: g.icon, line: line });
+    }
+    return out;
+  }
+  function kidCheer(rng) {
+    rng = rng || Math.random;
+    return KID_CHEERS[Math.floor(rng() * KID_CHEERS.length)];
+  }
+  // __COACHKID_END__
 
   // ============ PLAY & CREATE ============
   const PLAY_GAMES = [
@@ -3665,6 +3788,16 @@
     $("cal-prev").addEventListener("click", () => calShift(-1));
     $("cal-next").addEventListener("click", () => calShift(1));
     $("coach-run").addEventListener("click", runCoach);
+    $("coach-mode").addEventListener("click", async (e) => {
+      const btn = e.target.closest("button[data-aud]");
+      if (!btn) return;
+      coachAudience = btn.getAttribute("data-aud") === "child" ? "child" : "parent";
+      await EduStore.setMeta("coach.audience", coachAudience);
+      applyCoachMode();
+      $("coach-output").textContent = "";
+      $("coach-status").textContent = "";
+      if (coachAudience === "child") await renderKidCoachTips();
+    });
     $("export-backup").addEventListener("click", exportBackup);
     $("import-backup").addEventListener("change", (e) => importBackup(e.target.files[0]));
 

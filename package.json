@@ -7,6 +7,6 @@
     "node": ">=18"
   },
   "scripts": {
-    "test": "node test/heuristics.test.js && node test/vocab-quest.test.js && node test/spelling-wizard.test.js && node test/number-ninja.test.js && node test/sync.test.js && node test/analyzer-progress.test.js && node test/layout-safe-area.test.js"
+    "test": "node test/heuristics.test.js && node test/vocab-quest.test.js && node test/spelling-wizard.test.js && node test/number-ninja.test.js && node test/sync.test.js && node test/analyzer-progress.test.js && node test/layout-safe-area.test.js && node test/coach-kid.test.js && node test/coach-api.test.js"
   }
 }
