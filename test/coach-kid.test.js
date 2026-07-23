@@ -7,9 +7,11 @@ assert.ok(start >= 0, "no __COACHKID_START__"); assert.ok(end > start, "no __COA
 const block = appSrc.slice(start, end);
 const sandbox = {}; vm.createContext(sandbox);
 vm.runInContext(block +
-  "\n;this.__x = { kidMasterySummary, kidGameBucket, kidNextSteps, kidCheer, KID_CHEERS };",
+  "\n;this.__x = { kidMasterySummary, kidGameBucket, kidNextSteps, kidCheer, KID_CHEERS," +
+  " kidInterests, kidProjectsSummary, kidSparkLine };",
   sandbox, { filename: "app.js#coachkid" });
-const { kidMasterySummary, kidGameBucket, kidNextSteps, kidCheer, KID_CHEERS } = sandbox.__x;
+const { kidMasterySummary, kidGameBucket, kidNextSteps, kidCheer, KID_CHEERS,
+  kidInterests, kidProjectsSummary, kidSparkLine } = sandbox.__x;
 // AI_BANNED copied from app.js (kept in sync manually):
 const AI_BANNED = ["weak","weakest","worst","bad","poor","behind","lazy","failing","fail",
   "stupid","dumb","slow","genius","gifted","talented"];
@@ -52,5 +54,78 @@ check("nvr→null", kidGameBucket("nvr"), null);
     AI_BANNED.forEach(function(w){ ok("no banned '"+w+"' in: "+l, !new RegExp("\\b"+w+"\\b").test(lc)); }); }); })();
 // kidCheer deterministic with seeded rng
 check("kidCheer picks index 0", kidCheer(() => 0), KID_CHEERS[0]);
+
+// ---- kidInterests ----
+const TOPIC_LABELS = { space: "Space", science: "Science", nature: "Nature" };
+const SUBJ_LABELS = { maths: "Maths", english: "English", vr: "VR" };
+// empty rows → empty interests
+check("interests empty", kidInterests([], TOPIC_LABELS, SUBJ_LABELS),
+  { topTopics: [], topSubject: null, favouriteKind: null, total: 0 });
+// counts topics/subjects/kinds, child-only, top subject is raw key, labels mapped
+(function(){
+  const rows = [
+    { author: "child", kind: "question", topic: "space", subject: "maths" },
+    { author: "child", kind: "question", topic: "space", subject: "maths" },
+    { author: "child", kind: "observation", topic: "nature", subject: "english" },
+    { author: "parent", kind: "question", topic: "science", subject: "vr" }, // excluded
+  ];
+  const i = kidInterests(rows, TOPIC_LABELS, SUBJ_LABELS);
+  check("interests total child-only", i.total, 3);
+  check("interests topTopic label", i.topTopics[0], "Space");
+  check("interests topSubject raw key", i.topSubject, "maths");
+  check("interests favouriteKind", i.favouriteKind, "question");
+})();
+// topTopics capped at 3
+(function(){
+  const rows = ["a","b","c","d"].map((t) => ({ author: "child", topic: t }));
+  ok("topTopics capped at 3", kidInterests(rows, {}, {}).topTopics.length === 3);
+})();
+
+// ---- kidProjectsSummary ----
+check("projects empty", kidProjectsSummary([], 1000),
+  { recentCount: 0, topSkills: [], avgEnjoyment: null, latest: [] });
+(function(){
+  const now = 100 * 86400000;
+  const projects = [
+    { name: "Game", category: "Roblox Studio", createdAt: now - 5 * 86400000, skills: ["animation","code"], enjoyment: 5 },
+    { name: "Story", category: "Scratch", createdAt: now - 40 * 86400000, skills: ["code"], enjoyment: 3 },
+  ];
+  const s = kidProjectsSummary(projects, now);
+  check("projects recentCount (30d)", s.recentCount, 1);
+  check("projects topSkill", s.topSkills[0], "code");
+  check("projects avgEnjoyment rounded", s.avgEnjoyment, 4);
+  check("projects latest name", s.latest[0].name, "Game");
+})();
+
+// ---- kidNextSteps interest boosting ----
+(function(){
+  // no focus, no practising, but interestSubject=maths → Number Ninja first
+  const s = kidNextSteps(null, kidMasterySummary({},{},{},{}), GAMES, 3, "maths");
+  ok("interest game first", s[0].gameTitle === "Number Ninja");
+  ok("interest line framing", s[0].line.indexOf("matches what you love") >= 0);
+})();
+(function(){
+  // focus still beats interest
+  const s = kidNextSteps({subject:"english"}, kidMasterySummary({},{},{},{}), GAMES, 3, "maths");
+  ok("focus beats interest", s[0].gameTitle === "Spelling Wizard");
+})();
+
+// ---- kidSparkLine ----
+check("spark topic+book", kidSparkLine("Space", "Matilda"),
+  "You've been wondering about Space and reading “Matilda” — here's an adventure! 🌟");
+check("spark topic only", kidSparkLine("Space", ""),
+  "You've been wondering about Space — here's an adventure! 🌟");
+check("spark book only", kidSparkLine("", "Matilda"),
+  "Loved reading “Matilda”? Here's your next adventure! 🌟");
+check("spark none", kidSparkLine("", ""), "");
+
+// SAFETY: interest-framed lines + spark lines contain no banned word
+(function(){
+  const lines = kidNextSteps(null, kidMasterySummary({},{},{},{}), GAMES, 3, "maths")
+    .map((x) => x.line)
+    .concat([kidSparkLine("Space", "Matilda"), kidSparkLine("Space", ""), kidSparkLine("", "Matilda")]);
+  lines.forEach(function(l){ const lc = l.toLowerCase();
+    AI_BANNED.forEach(function(w){ ok("no banned '"+w+"' in: "+l, !new RegExp("\\b"+w+"\\b").test(lc)); }); });
+})();
 
 console.log("coach-kid.test.js: " + passed + " assertions passed");

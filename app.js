@@ -1102,8 +1102,21 @@
     var focus = await focusSubject();
     var summary = kidMasterySummary(vocab.map, ninja.map, spell.map,
       { vocab: VOCAB_MASTER_AT, ninja: NINJA_MASTER_AT, spell: SPELL_MASTER_AT });
-    var steps = kidNextSteps(focus, summary, PLAY_GAMES, 3);
+    // Cross-signal: link the child's curiosity + recent reading into the tips.
+    var topicLabels = Object.fromEntries(CUR_TOPICS.map(function (t) { return [t.key, t.label]; }));
+    var interests = kidInterests(await EduStore.getCuriosity(), topicLabels, SUBJECT_LABEL);
+    var recentBook = (await EduStore.getReading())[0];
+    var bookTitle = (recentBook && recentBook.title) || "";
+    var steps = kidNextSteps(focus, summary, PLAY_GAMES, 3, interests.topSubject);
     box.innerHTML = "";
+    // A friendly spark line connecting a real interest/book, when one exists.
+    var spark = kidSparkLine(interests.topTopics[0] || "", bookTitle);
+    if (spark) {
+      var sparkEl = document.createElement("div");
+      sparkEl.className = "coach-kid-spark";
+      sparkEl.textContent = spark;
+      box.appendChild(sparkEl);
+    }
     var head = document.createElement("div");
     head.className = "coach-kid-head";
     head.textContent = focus ? focusPhrase(focus.label) : "🌟 Your next adventures";
@@ -1147,7 +1160,33 @@
     const mocks = (await EduStore.getMocks()).slice(0, 5).map((m) => ({
       subject: SUBJECT_LABEL[m.subject] || m.subject, pct: m.scorePct, date: m.date,
     }));
-    return { subjects, schools, reading: { weekMinutes, books }, mocks };
+    // Whole-child signals: curiosity interests, project reflections, game mastery.
+    // Only derived/taxonomy labels leave the device — no raw spark text or notes.
+    const topicLabels = Object.fromEntries(CUR_TOPICS.map((t) => [t.key, t.label]));
+    const curiosityRows = await EduStore.getCuriosity();
+    const ints = kidInterests(curiosityRows, topicLabels, SUBJECT_LABEL);
+    const interests = {
+      topics: ints.topTopics,
+      favouriteSubject: ints.topSubject ? (SUBJECT_LABEL[ints.topSubject] || ints.topSubject) : null,
+      favouriteKind: ints.favouriteKind,
+      total: ints.total,
+    };
+    const projSummary = kidProjectsSummary(await EduStore.getProjects());
+    const projects = {
+      recentCount: projSummary.recentCount,
+      topSkills: projSummary.topSkills,
+      avgEnjoyment: projSummary.avgEnjoyment,
+      latest: projSummary.latest,
+    };
+    const mSummary = kidMasterySummary(
+      (await loadVocabMastery()).map, (await loadNinjaMastery()).map, (await loadSpellMastery()).map,
+      { vocab: VOCAB_MASTER_AT, ninja: NINJA_MASTER_AT, spell: SPELL_MASTER_AT });
+    const games = {
+      vocabMastered: mSummary.vocab.mastered, vocabPractising: mSummary.vocab.practising,
+      mathsMastered: mSummary.ninja.mastered, mathsPractising: mSummary.ninja.practising,
+      spellingMastered: mSummary.spell.mastered, spellingPractising: mSummary.spell.practising,
+    };
+    return { subjects, schools, reading: { weekMinutes, books }, mocks, interests, projects, games };
   }
   async function runCoach() {
     const status = $("coach-status");
@@ -1219,29 +1258,98 @@
     if (skillSubject === "english") return "spell"; // Spelling Wizard
     return null;                                     // no mastery signal yet
   }
+  // Summarise a child's curiosity signals into interests. rows are curiosity
+  // records ({ author, kind, topic, subject }); topicLabels maps a topic key →
+  // display label, subjectLabels maps an 11+ subject key → display label. Only
+  // the child's own sparks count. Returns:
+  //   { topTopics: [label], topSubject: subjectKey|null, favouriteKind, total }
+  // topSubject is the RAW 11+ subject key so it can match game.skillSubject.
+  function kidInterests(rows, topicLabels, subjectLabels) {
+    topicLabels = topicLabels || {}; subjectLabels = subjectLabels || {};
+    var child = (rows || []).filter(function (r) { return (r.author || "child") !== "parent"; });
+    var topicCounts = {}, subjectCounts = {}, kindCounts = {};
+    child.forEach(function (r) {
+      if (r.topic) topicCounts[r.topic] = (topicCounts[r.topic] || 0) + 1;
+      if (r.subject) subjectCounts[r.subject] = (subjectCounts[r.subject] || 0) + 1;
+      if (r.kind) kindCounts[r.kind] = (kindCounts[r.kind] || 0) + 1;
+    });
+    function topKeys(counts) {
+      return Object.keys(counts).sort(function (a, b) { return counts[b] - counts[a]; });
+    }
+    var topTopics = topKeys(topicCounts).slice(0, 3)
+      .map(function (k) { return topicLabels[k] || k; });
+    var subjKeys = topKeys(subjectCounts);
+    var favKind = topKeys(kindCounts)[0] || null;
+    return {
+      topTopics: topTopics,
+      topSubject: subjKeys[0] || null,
+      favouriteKind: favKind,
+      total: child.length,
+    };
+  }
+  // Summarise Play & Create projects. nowMs lets callers keep this pure/testable.
+  // Returns { recentCount, topSkills:[str], avgEnjoyment:number|null, latest:[{name,category}] }.
+  function kidProjectsSummary(projects, nowMs) {
+    projects = projects || [];
+    nowMs = nowMs || Date.now();
+    var cutoff = nowMs - 30 * 86400000;
+    var recentCount = 0, skillCounts = {}, enjSum = 0, enjN = 0;
+    projects.forEach(function (p) {
+      if ((p.createdAt || 0) >= cutoff) recentCount++;
+      (p.skills || []).forEach(function (s) { if (s) skillCounts[s] = (skillCounts[s] || 0) + 1; });
+      if (typeof p.enjoyment === "number") { enjSum += p.enjoyment; enjN++; }
+    });
+    var topSkills = Object.keys(skillCounts)
+      .sort(function (a, b) { return skillCounts[b] - skillCounts[a]; }).slice(0, 3);
+    var latest = projects.slice(0, 2).map(function (p) {
+      return { name: p.name, category: p.category };
+    });
+    return {
+      recentCount: recentCount,
+      topSkills: topSkills,
+      avgEnjoyment: enjN ? Math.round(enjSum / enjN) : null,
+      latest: latest,
+    };
+  }
   // Ordered, positive, game-linked suggestions. Prioritise the focus subject's
-  // game, then games with the most "practising" items. cap defaults to 3.
-  // focus = { subject } | null. Returns [{ gameTitle, icon, line }].
-  function kidNextSteps(focus, summary, games, cap) {
+  // game, then a game matching the child's top interest subject, then games with
+  // the most "practising" items. cap defaults to 3. focus = { subject } | null.
+  // interestSubject = raw 11+ subject key from kidInterests().topSubject | null.
+  // Returns [{ gameTitle, icon, line }].
+  function kidNextSteps(focus, summary, games, cap, interestSubject) {
     cap = cap || 3;
     summary = summary || {};
     var scored = (games || []).map(function (g) {
       var bucket = kidGameBucket(g.skillSubject);
       var practising = bucket && summary[bucket] ? summary[bucket].practising : 0;
       var isFocus = !!(focus && g.skillSubject === focus.subject);
-      var score = (isFocus ? 1000 : 0) + practising;
-      return { g: g, score: score, isFocus: isFocus };
+      var isInterest = !isFocus && !!(interestSubject && g.skillSubject === interestSubject);
+      var score = (isFocus ? 1000 : 0) + (isInterest ? 500 : 0) + practising;
+      return { g: g, score: score, isFocus: isFocus, isInterest: isInterest };
     });
     scored.sort(function (a, b) { return b.score - a.score; });
     var out = [];
     for (var i = 0; i < scored.length && out.length < cap; i++) {
       var g = scored[i].g;
-      var line = scored[i].isFocus
-        ? "Time for an adventure — try a round of " + g.title + " " + g.icon
-        : "Try a round of " + g.title + " " + g.icon;
+      var line;
+      if (scored[i].isFocus) line = "Time for an adventure — try a round of " + g.title + " " + g.icon;
+      else if (scored[i].isInterest) line = "This one matches what you love — try a round of " + g.title + " " + g.icon;
+      else line = "Try a round of " + g.title + " " + g.icon;
       out.push({ gameTitle: g.title, icon: g.icon, line: line });
     }
     return out;
+  }
+  // Friendly opening that links a spark back to the child. topicLabel comes from a
+  // FIXED taxonomy (safe); bookTitle is free text and MUST be escaped by the caller
+  // before it reaches the DOM. Returns "" when there is nothing to connect.
+  function kidSparkLine(topicLabel, bookTitle) {
+    if (topicLabel && bookTitle)
+      return "You've been wondering about " + topicLabel + " and reading “" + bookTitle + "” — here's an adventure! 🌟";
+    if (topicLabel)
+      return "You've been wondering about " + topicLabel + " — here's an adventure! 🌟";
+    if (bookTitle)
+      return "Loved reading “" + bookTitle + "”? Here's your next adventure! 🌟";
+    return "";
   }
   function kidCheer(rng) {
     rng = rng || Math.random;
