@@ -1845,7 +1845,7 @@
         '<button type="button" class="vq-option" data-i="' + i + '">' + esc(opt) + "</button>").join("");
       $("vq").innerHTML =
         '<div class="vq-progress">Question ' + (idx + 1) + " of " + quiz.length + " · Score " + score + "</div>" +
-        '<div class="vq-word">' + esc(q.word) + "</div>" +
+        '<div class="vq-word" tabindex="-1">' + esc(q.word) + "</div>" +
         '<p class="hint">What does this word mean?</p>' +
         '<div class="vq-options">' + optsHTML + "</div>" +
         '<button type="button" id="vq-idk" class="vq-idk">🤔 I don\'t know</button>' +
@@ -1855,6 +1855,10 @@
         b.addEventListener("click", () => choose(parseInt(b.dataset.i, 10))));
       $("vq-idk").addEventListener("click", () => choose(-1));
       $("vq-next").addEventListener("click", next);
+      // Park focus on the (non-interactive) prompt so re-rendering the next
+      // question can't leave keyboard focus on an answer option, which would
+      // highlight a row the user never hovered.
+      $("vq").querySelector(".vq-word").focus();
     }
 
     // i is the chosen option index, or -1 for "I don't know".
@@ -2046,7 +2050,7 @@
         '<button type="button" class="vq-option" data-i="' + i + '">' + esc(String(opt)) + "</button>").join("");
       $("vq").innerHTML =
         '<div class="vq-progress">Question ' + (idx + 1) + " of " + round.length + " · Score " + score + "</div>" +
-        '<div class="vq-word">' + esc(q.prompt) + "</div>" +
+        '<div class="vq-word" tabindex="-1">' + esc(q.prompt) + "</div>" +
         '<p class="hint">' + esc(NINJA_CAT_LABEL[q.cat] || "Solve it") + " — pick the answer</p>" +
         '<div class="vq-options">' + optsHTML + "</div>" +
         '<button type="button" id="vq-idk" class="vq-idk">🤔 I don\'t know</button>' +
@@ -2056,6 +2060,10 @@
         b.addEventListener("click", () => choose(parseInt(b.dataset.i, 10))));
       $("vq-idk").addEventListener("click", () => choose(-1));
       $("vq-next").addEventListener("click", next);
+      // Park focus on the (non-interactive) prompt so re-rendering the next
+      // question can't leave keyboard focus on an answer option, which would
+      // highlight a row the user never hovered.
+      $("vq").querySelector(".vq-word").focus();
     }
 
     // i is the chosen option index, or -1 for "I don't know".
@@ -2210,7 +2218,7 @@
       const q = round[idx];
       $("sw").innerHTML =
         '<div class="sw-progress">Word ' + (idx + 1) + " of " + round.length + " · Score " + score + "</div>" +
-        '<p class="hint sw-hint">' + esc(q.hint) + "</p>" +
+        '<p class="hint sw-hint" tabindex="-1">' + esc(q.hint) + "</p>" +
         '<button type="button" id="sw-hear" class="sw-hear">🔊 Hear the word</button>' +
         '<div class="sw-slots" id="sw-slots"></div>' +
         '<div class="sw-tiles" id="sw-tiles"></div>' +
@@ -2227,6 +2235,10 @@
       $("sw-reveal").addEventListener("click", reveal);
       $("sw-next").addEventListener("click", next);
       renderTiles();
+      // Park focus on the (non-interactive) hint so re-rendering the next word
+      // can't leave keyboard focus on a letter tile, which would highlight a
+      // tile the user never hovered.
+      $("sw").querySelector(".sw-hint").focus();
       speakWord(q.word);  // say it once on load so the child hears the target
     }
 
@@ -2921,11 +2933,17 @@
       payloadImages.push({ mediaType: mediaType, data: base64 });
     }
     if (options.onProgress) options.onProgress(0.2);
-    // (c) POST with AbortController timeout (~60s). Vision analysis of a full
-    // worksheet can take a while, so allow generous time before giving up.
+    // (c) POST with an AbortController timeout that SCALES with the number of
+    // pages. A single-image call finishes quickly, but a multi-page worksheet is
+    // one big vision request that takes proportionally longer, so a fixed 60s cut
+    // the multi-file case off before the server could ever answer. We give ~40s
+    // per page over a 45s base, capped just under the server's maxDuration (300s,
+    // see vercel.json) so the client waits for the server's real response/error
+    // instead of pre-empting it.
+    const clientTimeoutMs = Math.min(295000, 45000 + payloadImages.length * 40000);
     const ctrl = new AbortController();
     let timedOut = false;
-    const timer = setTimeout(() => { timedOut = true; ctrl.abort(); }, 60000);
+    const timer = setTimeout(() => { timedOut = true; ctrl.abort(); }, clientTimeoutMs);
     let resp;
     try {
       resp = await fetch("/api/analyse-homework", {
@@ -2937,7 +2955,10 @@
     } catch (e) {
       clearTimeout(timer);
       if (timedOut) {
-        throw new Error("The analysis took too long and timed out. Your photo is safe — try again, or review by hand.");
+        const many = payloadImages.length > 1
+          ? " With several pages this can take a while — try again, or split it into fewer pages."
+          : " Your photo is safe — try again, or review by hand.";
+        throw new Error("The analysis took too long and timed out." + many);
       }
       throw new Error("We couldn't reach the analysis service. Your photo is safe — you can review by hand.");
     }

@@ -4,6 +4,10 @@ const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 const DEFAULT_MODEL = "claude-sonnet-5";
 const ALLOWED_MEDIA = ["image/jpeg", "image/png"];
 const MAX_DECODED_BYTES = 3 * 1024 * 1024; // 3 MB decoded ceiling; client targets < 2 MB
+// Abort the upstream Anthropic call a few seconds before Vercel's maxDuration
+// (300s, see vercel.json) so we can return a clean, diagnosable 504 instead of
+// the function being hard-killed with no response body.
+const UPSTREAM_TIMEOUT_MS = 290000;
 const ERROR_TYPES = ["concept", "calculation", "instruction", "incomplete", "time", "skipped", "other"];
 const CORRECTNESS = ["correct", "incorrect", "partial", "unclear"];
 
@@ -172,35 +176,52 @@ module.exports = async (req, res) => {
   }
   if (totalBytes > MAX_DECODED_BYTES) return res.status(413).json({ error: "Images too large" });
 
+  const ctrl = new AbortController();
+  let upstreamTimedOut = false;
+  const upstreamTimer = setTimeout(() => { upstreamTimedOut = true; ctrl.abort(); }, UPSTREAM_TIMEOUT_MS);
   try {
-    const upstream = await fetch(ANTHROPIC_URL, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01"
-      },
-      body: JSON.stringify({
-        model,
-        max_tokens: 8192,
-        // Claude Sonnet 5 runs adaptive thinking by default, which shares the
-        // max_tokens budget with the answer — a tight budget gets spent on thinking
-        // and truncates the JSON (stop_reason: max_tokens). This is a structured
-        // extraction task, not deep reasoning, so disable thinking to reserve the
-        // whole budget for the output.
-        thinking: { type: "disabled" },
-        // Structured Outputs (GA output_config.format, no beta header) — constrains
-        // decoding so the response is guaranteed schema-valid JSON.
-        output_config: { format: { type: "json_schema", schema: RESPONSE_SCHEMA } },
-        system: SYSTEM_PROMPT,
-        messages: [{
-          role: "user",
-          content: images
-            .map((img) => ({ type: "image", source: { type: "base64", media_type: img.mediaType, data: img.data } }))
-            .concat([{ type: "text", text: buildUserPrompt(subject, images.length) }])
-        }]
-      })
-    });
+    let upstream;
+    try {
+      upstream = await fetch(ANTHROPIC_URL, {
+        method: "POST",
+        signal: ctrl.signal,
+        headers: {
+          "content-type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01"
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: 8192,
+          // Claude Sonnet 5 runs adaptive thinking by default, which shares the
+          // max_tokens budget with the answer — a tight budget gets spent on thinking
+          // and truncates the JSON (stop_reason: max_tokens). This is a structured
+          // extraction task, not deep reasoning, so disable thinking to reserve the
+          // whole budget for the output.
+          thinking: { type: "disabled" },
+          // Structured Outputs (GA output_config.format, no beta header) — constrains
+          // decoding so the response is guaranteed schema-valid JSON.
+          output_config: { format: { type: "json_schema", schema: RESPONSE_SCHEMA } },
+          system: SYSTEM_PROMPT,
+          messages: [{
+            role: "user",
+            content: images
+              .map((img) => ({ type: "image", source: { type: "base64", media_type: img.mediaType, data: img.data } }))
+              .concat([{ type: "text", text: buildUserPrompt(subject, images.length) }])
+          }]
+        })
+      });
+    } catch (fetchErr) {
+      // A deliberate upstream abort (we hit UPSTREAM_TIMEOUT_MS before Vercel's
+      // maxDuration) returns a clean 504 the client can message nicely, rather
+      // than the function being hard-killed with no body.
+      if (upstreamTimedOut) {
+        return res.status(504).json({ error: "The analysis took too long and timed out. Try again, or use fewer pages." });
+      }
+      throw fetchErr;
+    } finally {
+      clearTimeout(upstreamTimer);
+    }
 
     if (!upstream.ok) {
       // Surface the real upstream reason (like api/coach.js) so failures are

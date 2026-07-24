@@ -724,8 +724,12 @@ body.no-tabbar .tabbar { display: none; }
   transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
 }
 .vq-option:hover:enabled { background: var(--card); border-color: var(--accent); }
+.vq-option:focus-visible:enabled { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
 .vq-option:active:enabled { transform: scale(0.99); }
 .vq-option:disabled { cursor: default; }
+/* The prompt is parked focus target (tabindex=-1) between questions — never
+   show a focus ring on it. */
+.vq-word:focus, .vq-word:focus-visible { outline: none; }
 /* "I don't know" — deliberately styled apart from the answer options so it
    reads as an honest opt-out, not a fifth choice. */
 .vq-idk {
@@ -777,8 +781,11 @@ body.no-tabbar .tabbar { display: none; }
   transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease, box-shadow 0.15s ease;
 }
 .sw-tile:hover:enabled { background: var(--card); border-color: var(--accent); }
+.sw-tile:focus-visible:enabled { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
 .sw-tile:active:enabled { transform: translateY(1px) scale(0.96); box-shadow: none; }
 .sw-tile:disabled { opacity: 0.35; cursor: default; box-shadow: none; }
+/* The hint is parked focus target (tabindex=-1) between words — no focus ring. */
+.sw-hint:focus, .sw-hint:focus-visible { outline: none; }
 .sw-controls { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 10px; }
 .sw-controls .btn-secondary { padding: 8px 12px; font-size: 13px; }
 .sw-reveal {
