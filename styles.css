@@ -18,6 +18,9 @@
   --rag-green: #2ecc9b;
   --rag-amber: #ff9f1c;
   --rag-red: #ff5c6c;
+  /* "Needs review" warning tint for the Homework Analyzer's uncertain rows. */
+  --warn: #c9721a;
+  --warn-bg: #fff4e3;
   --r-sm: 10px;
   --r-md: 14px;
   --r-lg: 18px;
@@ -46,6 +49,9 @@
     --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.55);
     --ring: 0 0 0 3px rgba(255, 171, 51, 0.28);
     --rag-amber: #ffab33;
+    /* Dark-mode warning: brighter amber text/border, deep amber-tinted fill. */
+    --warn: #ffc266;
+    --warn-bg: #3a2c12;
   }
 }
 
@@ -968,9 +974,21 @@ body.no-tabbar .tabbar { display: none; }
 .an-thumb-del { position: absolute; top: 2px; right: 2px; border: none; border-radius: 999px; width: 22px; height: 22px;
                 background: rgba(0,0,0,.55); color: #fff; font-size: 12px; line-height: 1; cursor: pointer; }
 /* Enhanced AI (opt-in) review affordances */
-.an-needs-review { border-left: 3px solid var(--warn, #e08a00); background: var(--warn-bg, #fff8ec); }
-.an-badge { display: inline-block; font-size: .75rem; padding: .1rem .45rem; border-radius: 999px;
-            background: var(--warn, #e08a00); color: #fff; margin-left: .4rem; }
+/* A question the AI wasn't sure about gets an unmistakable amber card: a full
+   warm border, a thick left accent bar, and a theme-aware tinted fill so it
+   reads clearly in both light and dark mode. */
+.an-needs-review {
+  border: 1.5px solid var(--warn);
+  border-left: 5px solid var(--warn);
+  background: var(--warn-bg);
+}
+.an-badge {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: .72rem; font-weight: 800; letter-spacing: .01em;
+  padding: .15rem .5rem; border-radius: 999px;
+  background: var(--warn); color: var(--accent-ink); margin-left: .4rem; white-space: nowrap;
+}
+.an-badge::before { content: "⚠️"; font-size: .8em; }
 .an-ai-note { font-size: .85rem; color: var(--muted, #666); margin-top: .25rem; font-style: italic; }
 .an-q-head { display: flex; align-items: flex-start; gap: 6px; }
 .an-q-head .an-q-label { flex: 1; margin-bottom: 0; }

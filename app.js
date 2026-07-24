@@ -3544,7 +3544,7 @@
         AN_SUPPORT_LEVELS.map((c) => '<option value="' + c.key + '"' + (a.supportLevel === c.key ? " selected" : "") + ">" + esc(c.label) + "</option>")).join("");
       const showErr = outcome === "incorrect" || outcome === "partial";
       const needsFlag = a.needsReview === true || (a.confidence != null && a.confidence < 0.6);
-      const badge = needsFlag ? '<span class="an-badge">Please check</span>' : "";
+      const badge = needsFlag ? '<span class="an-badge">Not sure — please check</span>' : "";
       // Show the AI's right/wrong judgement at a glance by highlighting the
       // matching button; the parent can still tap the other one to override.
       const tickActive = outcome === "correct" ? " active" : "";
