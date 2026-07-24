@@ -8,6 +8,11 @@ const MAX_DECODED_BYTES = 3 * 1024 * 1024; // 3 MB decoded ceiling; client targe
 // (300s, see vercel.json) so we can return a clean, diagnosable 504 instead of
 // the function being hard-killed with no response body.
 const UPSTREAM_TIMEOUT_MS = 290000;
+// Output-token ceiling for the extraction. A worksheet with many questions
+// produces a long JSON array; at 8192 the response was truncated mid-JSON
+// (stop_reason: max_tokens) and failed to parse. Sonnet-class models support
+// far more, so give the structured output ample room. Overridable per-env.
+const MAX_OUTPUT_TOKENS = Number(process.env.ANTHROPIC_MAX_OUTPUT_TOKENS) || 32000;
 const ERROR_TYPES = ["concept", "calculation", "instruction", "incomplete", "time", "skipped", "other"];
 const CORRECTNESS = ["correct", "incorrect", "partial", "unclear"];
 
@@ -192,7 +197,7 @@ module.exports = async (req, res) => {
         },
         body: JSON.stringify({
           model,
-          max_tokens: 8192,
+          max_tokens: MAX_OUTPUT_TOKENS,
           // Claude Sonnet 5 runs adaptive thinking by default, which shares the
           // max_tokens budget with the answer — a tight budget gets spent on thinking
           // and truncates the JSON (stop_reason: max_tokens). This is a structured
