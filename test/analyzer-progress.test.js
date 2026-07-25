@@ -28,13 +28,15 @@ vm.createContext(sandbox);
 vm.runInContext(
   block +
     "\n;this.__x = { anOutcome, flattenAttempts, topicMasteryOverTime, " +
-    "accuracyComplexityTrend, errorPatternEvolution, independenceTrend, approvedVsUnconfirmed };",
+    "accuracyComplexityTrend, errorPatternEvolution, independenceTrend, approvedVsUnconfirmed, " +
+    "expectedComplexityForYear, standardComparison };",
   sandbox,
   { filename: "app.js#analyzer-progress" }
 );
 const {
   anOutcome, flattenAttempts, topicMasteryOverTime,
   accuracyComplexityTrend, errorPatternEvolution, independenceTrend, approvedVsUnconfirmed,
+  expectedComplexityForYear, standardComparison,
 } = sandbox.__x;
 assert.strictEqual(typeof topicMasteryOverTime, "function", "topicMasteryOverTime not extracted");
 
@@ -134,5 +136,38 @@ check("approvedVsUnconfirmed([]) zeros", approvedVsUnconfirmed([]), { approved: 
 // ---- approvedVsUnconfirmed ----
 check("approved vs unconfirmed counts", approvedVsUnconfirmed(rows),
   { approved: 3, unconfirmed: 2, total: 5 });
+
+// ---- expectedComplexityForYear ----
+(function () {
+  check("Reception band 1-2", expectedComplexityForYear("reception"), { min: 1, max: 2, mid: 1.5 });
+  check("Y3 band 2-3", expectedComplexityForYear("y3"), { min: 2, max: 3, mid: 2.5 });
+  check("Y6 band 3-4", expectedComplexityForYear("y6"), { min: 3, max: 4, mid: 3.5 });
+  check("Y8 band 3-4 (KS3)", expectedComplexityForYear("y8"), { min: 3, max: 4, mid: 3.5 });
+  check("Y11 band 4-5", expectedComplexityForYear("y11"), { min: 4, max: 5, mid: 4.5 });
+  check("case-insensitive", expectedComplexityForYear("Y6"), { min: 3, max: 4, mid: 3.5 });
+  check("blank -> null", expectedComplexityForYear(""), null);
+  check("unknown -> null", expectedComplexityForYear("nursery"), null);
+})();
+
+// ---- standardComparison ----
+(function () {
+  // Fixture recent avg complexity (last 3 worksheets ascending): (2+3+4)/3 = 3.0.
+  check("no year -> null", standardComparison(rows, ""), null);
+  // Y6 band is 3-4; recentAvg 3.0 sits within.
+  check("Y6 within band", standardComparison(rows, "y6"),
+    { status: "within", recentAvg: 3, band: { min: 3, max: 4, mid: 3.5 }, worksheetsUsed: 3 });
+  // Y11 band is 4-5; recentAvg 3.0 is below.
+  check("Y11 below band", standardComparison(rows, "y11"),
+    { status: "below", recentAvg: 3, band: { min: 4, max: 5, mid: 4.5 }, worksheetsUsed: 3 });
+  // Reception band is 1-2; recentAvg 3.0 is above.
+  check("Reception above band", standardComparison(rows, "reception"),
+    { status: "above", recentAvg: 3, band: { min: 1, max: 2, mid: 1.5 }, worksheetsUsed: 3 });
+  // No complexity recorded -> null.
+  check("no complexity -> null", standardComparison(
+    [{ createdAt: 1, overall: { subject: "maths" }, attempts: [{ topic: "x" }] }], "y6"), null);
+  // recentN limits how many worksheets feed the average: last 1 = avg 4 -> within Y11.
+  check("recentN=1 uses latest only", standardComparison(rows, "y11", { recentN: 1 }),
+    { status: "within", recentAvg: 4, band: { min: 4, max: 5, mid: 4.5 }, worksheetsUsed: 1 });
+})();
 
 console.log("analyzer-progress.test.js: " + passed + " assertions passed");

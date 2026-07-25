@@ -3316,6 +3316,62 @@
     flat.forEach((a) => { if (a.parentApproved) approved++; });
     return { approved: approved, unconfirmed: flat.length - approved, total: flat.length };
   }
+
+  // Expected complexity band (on the app's 1..5 estimate scale) for a UK school
+  // year key. This is a gentle guide for the parent, NOT a curriculum standard or
+  // a verdict — the app's complexity is a self-referential, parent-editable
+  // wording estimate. Returns null for unknown/blank so callers can hide the line.
+  // Bands (confirmed with the user): KS1 R-Y2 -> 1-2, Lower KS2 Y3-Y4 -> 2-3,
+  // Upper KS2 Y5-Y6 -> 3-4, KS3 Y7-Y9 -> 3-4, KS4+ Y10-Y13 -> 4-5.
+  function expectedComplexityForYear(year) {
+    const key = String(year || "").trim().toLowerCase();
+    const bands = {
+      reception: [1, 2], y1: [1, 2], y2: [1, 2],
+      y3: [2, 3], y4: [2, 3],
+      y5: [3, 4], y6: [3, 4],
+      y7: [3, 4], y8: [3, 4], y9: [3, 4],
+      y10: [4, 5], y11: [4, 5], y12: [4, 5], y13: [4, 5],
+    };
+    const b = bands[key];
+    if (!b) return null;
+    return { min: b[0], max: b[1], mid: Math.round(((b[0] + b[1]) / 2) * 10) / 10 };
+  }
+
+  // Compare a child's RECENT recorded work against the expected band for their
+  // year. Uses the last few worksheets' average complexity (self-referential,
+  // from their own recorded work) and reports whether it sits below / within /
+  // above the band. Deliberately free of deficit / ability / identity language:
+  // "below" simply means the recorded questions were gentler than typical, which
+  // is context, not judgement. Returns null when there's no year set or no
+  // complexity recorded yet, so the caller can hide the line entirely.
+  function standardComparison(rows, year, opts) {
+    const band = expectedComplexityForYear(year);
+    if (!band) return null;
+    const recentN = (opts && opts.recentN) || 3;
+    const list = (rows || []).slice().sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+    const recent = list.slice(-recentN);
+    const cx = [];
+    recent.forEach((r) => {
+      let avg = (r.overall && r.overall.avgComplexity != null) ? r.overall.avgComplexity : null;
+      if (avg == null) {
+        const vals = (r.attempts || []).map((a) => a.complexity).filter((c) => c);
+        avg = vals.length ? vals.reduce((s, c) => s + c, 0) / vals.length : null;
+      }
+      if (avg != null) cx.push(avg);
+    });
+    if (!cx.length) return null;
+    const recentAvg = Math.round((cx.reduce((s, c) => s + c, 0) / cx.length) * 10) / 10;
+    let status;
+    if (recentAvg < band.min) status = "below";
+    else if (recentAvg > band.max) status = "above";
+    else status = "within";
+    return {
+      status: status,
+      recentAvg: recentAvg,
+      band: band,
+      worksheetsUsed: cx.length,
+    };
+  }
   // __ANALYTICS_END__
 
   // Working draft during a capture→review session (before it is saved).
@@ -3721,6 +3777,8 @@
       return;
     }
     const trend = accuracyComplexityTrend(rows);
+    const yearGroup = (await EduStore.getMeta("student.yearGroup")) || "";
+    const standard = standardComparison(rows, yearGroup);
     const allTopics = topicMasteryOverTime(rows, { topN: null });
     const topics = allTopics.slice(0, 6);
     const moreCount = allTopics.length - topics.length;
@@ -3736,6 +3794,27 @@
     parts.push("<h3>Progress over time</h3>");
     parts.push('<canvas id="an-trend" class="an-trend"></canvas>');
     if (trend.length < 2) parts.push('<p class="hint">Scan a few more worksheets to see the trend build. 🌱</p>');
+    // 2b. Expected-level guide (only when a school year is set and complexity has
+    // been recorded). A gentle, self-referential comparison — context, not a
+    // verdict — kept free of deficit / ability / identity language.
+    if (standard) {
+      const b = standard.band;
+      const bandTxt = b.min === b.max ? String(b.min) : (b.min + "–" + b.max);
+      let line;
+      if (standard.status === "within") {
+        line = "Recent work is sitting right around the level typical for this school year (about " +
+          standard.recentAvg + " on a 1–5 scale; typical is " + bandTxt + "). 🌟";
+      } else if (standard.status === "above") {
+        line = "Recent work has been reaching a little beyond the level typical for this school year (about " +
+          standard.recentAvg + " on a 1–5 scale; typical is " + bandTxt + "). Lovely stretch. 🚀";
+      } else {
+        line = "Recent worksheets have been gentler than the level typical for this school year (about " +
+          standard.recentAvg + " on a 1–5 scale; typical is " + bandTxt + "). A few more challenging questions could be a nice next step. 🌱";
+      }
+      parts.push('<h4>Compared with the school year</h4>');
+      parts.push('<p class="hint">' + line + "</p>");
+      parts.push('<p class="hint an-standard-note">This is a gentle guide from her own recorded work, not a formal school assessment.</p>');
+    }
     // 3. Topic mastery — a chip per topic with a delta arrow + a warm narrative line.
     if (topics.length) {
       parts.push("<h4>Topic mastery</h4>");
@@ -3860,6 +3939,18 @@
         toggle.__wired = true;
         toggle.addEventListener("change", async (e) => {
           await EduStore.setMeta("analyzer.enhancedAi.enabled", e.target.checked === true);
+        });
+      }
+    }
+    // School year (optional), persisted in EduStore meta. Drives the Analyzer's
+    // gentle expected-level guide; blank = not set = guide hidden.
+    const yearSel = $("set-year-group");
+    if (yearSel) {
+      yearSel.value = (await EduStore.getMeta("student.yearGroup")) || "";
+      if (!yearSel.__wired) {
+        yearSel.__wired = true;
+        yearSel.addEventListener("change", async (e) => {
+          await EduStore.setMeta("student.yearGroup", e.target.value || "");
         });
       }
     }

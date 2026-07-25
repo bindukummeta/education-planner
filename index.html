@@ -414,6 +414,27 @@
       </div>
       <div class="card">
         <h2>Analysis</h2>
+        <div class="field">
+          <label for="set-year-group">School year</label>
+          <select id="set-year-group">
+            <option value="">Not set</option>
+            <option value="reception">Reception</option>
+            <option value="y1">Year 1</option>
+            <option value="y2">Year 2</option>
+            <option value="y3">Year 3</option>
+            <option value="y4">Year 4</option>
+            <option value="y5">Year 5</option>
+            <option value="y6">Year 6</option>
+            <option value="y7">Year 7</option>
+            <option value="y8">Year 8</option>
+            <option value="y9">Year 9</option>
+            <option value="y10">Year 10</option>
+            <option value="y11">Year 11</option>
+            <option value="y12">Year 12</option>
+            <option value="y13">Year 13</option>
+          </select>
+          <p class="hint">Optional. When set, the Analyzer shows a gentle guide comparing recent work to the complexity typical for this year. It's context, never a verdict.</p>
+        </div>
         <label class="an-ai-toggle"><input type="checkbox" id="set-enhanced-ai"> ✨ Enhanced AI analysis (beta)</label>
         <p class="hint" id="set-enhanced-ai-hint">When on, a photo of a worksheet is sent securely to our AI provider (Anthropic) for analysis. Results are <b>suggestions only</b> that you review and approve. Photos are deleted from this device after you approve, unless you choose to keep them. Leave this off to use Private Scan Mode, which works fully offline. Default: <b>off</b>.</p>
       </div>
