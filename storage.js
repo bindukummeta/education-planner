@@ -516,6 +516,7 @@
       rows = rows.filter((r) => (r.studentId || DEFAULT_STUDENT_ID) === sid);
     }
     if (filter.source) rows = rows.filter((r) => r.source === filter.source);
+    if (filter.schoolId) rows = rows.filter((r) => r.schoolId === filter.schoolId);
     if (filter.subject) rows = rows.filter((r) => (r.overall && r.overall.subject) === filter.subject);
     return rows.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
   }

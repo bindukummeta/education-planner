@@ -38,6 +38,7 @@
       <li><button class="nav-item" data-view="curiosity"><span class="nav-ico">💡</span><span class="nav-label">Curiosity</span></button></li>
       <li><button class="nav-item" data-view="analyzer"><span class="nav-ico">📸</span><span class="nav-label">Homework Analyzer</span></button></li>
       <li><button class="nav-item" data-view="progress"><span class="nav-ico">📈</span><span class="nav-label">Progress</span></button></li>
+      <li><button class="nav-item" data-view="gaptarget"><span class="nav-ico">🎓</span><span class="nav-label">Gap to Target</span></button></li>
       <li><button class="nav-item" data-view="coach"><span class="nav-ico">🎯</span><span class="nav-label">AI Coach</span></button></li>
       <li><button class="nav-item" data-view="calendar"><span class="nav-ico">📅</span><span class="nav-label">Calendar</span></button></li>
       <li><button class="nav-item" data-view="settings"><span class="nav-ico">⚙️</span><span class="nav-label">Settings</span></button></li>
@@ -215,6 +216,16 @@
       </div>
     </section>
 
+    <!-- ============ GAP TO TARGET ============ -->
+    <section id="view-gaptarget" class="view hidden">
+      <div class="card">
+        <h2>🎓 Gap to Target</h2>
+        <p class="hint">Each school's mock papers set a target profile. This shows how recent homework is building towards it — complexity, topics and accuracy — with one exam countdown.</p>
+        <div id="gap-countdown" class="gap-countdown"></div>
+      </div>
+      <div id="gap-cards"></div>
+    </section>
+
     <!-- ============ HOMEWORK ============ -->
     <section id="view-homework" class="view hidden">
       <div class="card">
@@ -292,6 +303,8 @@
             </div>
             <div class="field"><label for="m-date">Date</label><input id="m-date" type="date" /></div>
           </div>
+          <div class="field"><label for="m-school">Target school (optional)</label>
+            <select id="m-school"><option value="">— none —</option></select></div>
           <div class="grid-2">
             <div class="field"><label for="m-paper">Paper name</label><input id="m-paper" placeholder="e.g. GL Pack 3" /></div>
             <div class="field"><label for="m-source">Source</label><input id="m-source" placeholder="e.g. Bond, CGP" /></div>
@@ -317,6 +330,7 @@
           <div class="field"><label for="m-note">Note (optional)</label><textarea id="m-note" rows="2"></textarea></div>
           <div class="form-actions"><button type="submit" class="btn-primary">Save mock</button></div>
         </form>
+        <div class="form-actions"><button type="button" id="m-analyse" class="btn-secondary">✨ Analyse this paper with AI</button></div>
       </div>
       <h2 class="section-heading">Recent mocks</h2>
       <div id="mock-list"></div>

@@ -29,7 +29,8 @@ vm.runInContext(
   block +
     "\n;this.__x = { anOutcome, flattenAttempts, topicMasteryOverTime, " +
     "accuracyComplexityTrend, errorPatternEvolution, independenceTrend, approvedVsUnconfirmed, " +
-    "expectedComplexityForYear, standardComparison };",
+    "expectedComplexityForYear, standardComparison, " +
+    "mockTargetProfile, gapToTarget, pacingStatus };",
   sandbox,
   { filename: "app.js#analyzer-progress" }
 );
@@ -37,6 +38,7 @@ const {
   anOutcome, flattenAttempts, topicMasteryOverTime,
   accuracyComplexityTrend, errorPatternEvolution, independenceTrend, approvedVsUnconfirmed,
   expectedComplexityForYear, standardComparison,
+  mockTargetProfile, gapToTarget, pacingStatus,
 } = sandbox.__x;
 assert.strictEqual(typeof topicMasteryOverTime, "function", "topicMasteryOverTime not extracted");
 
@@ -168,6 +170,73 @@ check("approved vs unconfirmed counts", approvedVsUnconfirmed(rows),
   // recentN limits how many worksheets feed the average: last 1 = avg 4 -> within Y11.
   check("recentN=1 uses latest only", standardComparison(rows, "y11", { recentN: 1 }),
     { status: "within", recentAvg: 4, band: { min: 4, max: 5, mid: 4.5 }, worksheetsUsed: 1 });
+})();
+
+// ---- Gap-to-Target: mockTargetProfile ----
+(function () {
+  check("mockTargetProfile([]) -> null", mockTargetProfile([]), null);
+  const mocks = [
+    { createdAt: 1000, overall: { subject: "maths", score: 80 }, attempts: [
+      { topic: "fractions", complexity: 3, marksAwarded: 8, marksAvailable: 10 },
+      { topic: "fractions", complexity: 4, marksAwarded: 8, marksAvailable: 10 }] },
+    { createdAt: 2000, overall: { subject: "maths", score: 70 }, attempts: [
+      { topic: "decimals", complexity: 4, marksAwarded: 7, marksAvailable: 10 },
+      { topic: "algebra", complexity: 5, marksAwarded: 7, marksAvailable: 10 }] },
+  ];
+  // Complexities [3,4,4,5] (<5 samples) -> min 3, max 5, mid avg 4. Weights sum 1.
+  check("mockTargetProfile derives band + weights + passMark", mockTargetProfile(mocks), {
+    complexityBand: { min: 3, max: 5, mid: 4 },
+    topics: [{ topic: "fractions", weight: 0.5 }, { topic: "decimals", weight: 0.25 }, { topic: "algebra", weight: 0.25 }],
+    passMark: 75, sampleCount: 2,
+  });
+  const prof = mockTargetProfile(mocks);
+  const wsum = prof.topics.reduce((s, t) => s + t.weight, 0);
+  check("topic weights sum ~1", wsum, 1);
+  // No complexity recorded -> null.
+  check("mockTargetProfile no complexity -> null",
+    mockTargetProfile([{ createdAt: 1, overall: { subject: "maths", score: 50 }, attempts: [{ topic: "x" }] }]), null);
+})();
+
+// ---- Gap-to-Target: gapToTarget ----
+(function () {
+  const prof = { complexityBand: { min: 3, max: 4, mid: 3.5 }, topics: [{ topic: "fractions", weight: 0.6 }, { topic: "decimals", weight: 0.4 }], passMark: 70, sampleCount: 2 };
+  check("gapToTarget(no profile) -> null", gapToTarget([{ createdAt: 1, overall: {}, attempts: [] }], null, {}), null);
+  // Complexity status ladder (neutral vocab only).
+  const hwLow = [{ createdAt: 1, overall: { subject: "maths", avgComplexity: 2 }, attempts: [] }];
+  const hwMid = [{ createdAt: 1, overall: { subject: "maths", avgComplexity: 3.5 }, attempts: [] }];
+  const hwHigh = [{ createdAt: 1, overall: { subject: "maths", avgComplexity: 5 }, attempts: [] }];
+  check("below band -> building", gapToTarget(hwLow, prof, {}).complexity.status, "building");
+  check("within band -> meeting", gapToTarget(hwMid, prof, {}).complexity.status, "meeting");
+  check("above band -> exceeding", gapToTarget(hwHigh, prof, {}).complexity.status, "exceeding");
+  check("complexity gap = recent - mid", gapToTarget(hwLow, prof, {}).complexity.gap, -1.5);
+  // Topics: met / weak / missing.
+  const profT = { complexityBand: { min: 2, max: 4, mid: 3 }, topics: [{ topic: "fractions", weight: 0.4 }, { topic: "decimals", weight: 0.3 }, { topic: "algebra", weight: 0.3 }], passMark: 70, sampleCount: 1 };
+  const hwT = [{ createdAt: 1, overall: { subject: "maths" }, attempts: [
+    { topic: "fractions", complexity: 3, marksAwarded: 9, marksAvailable: 10 },
+    { topic: "decimals", complexity: 3, marksAwarded: 2, marksAvailable: 10 }] }];
+  check("topics met/weak/missing", gapToTarget(hwT, profT, {}).topics,
+    { missing: ["algebra"], weak: ["decimals"], met: ["fractions"] });
+  // Accuracy: gap sign + status against passMark.
+  const hwAcc = [{ createdAt: 1, overall: { subject: "maths", score: 85, avgComplexity: 3.5 }, attempts: [] }];
+  check("accuracy gap + status", gapToTarget(hwAcc, prof, {}).accuracy,
+    { recent: 85, passMark: 70, gap: 15, status: "exceeding" });
+  // Empty homework -> neutral, verdict-free shape (no overallStatus).
+  check("empty homework -> enoughData false, no verdict", gapToTarget([], prof, {}), {
+    complexity: { recent: null, target: 3.5, gap: null },
+    topics: { missing: ["fractions", "decimals"], weak: [], met: [] },
+    accuracy: { recent: null, passMark: 70, gap: null },
+    enoughData: false,
+  });
+})();
+
+// ---- Gap-to-Target: pacingStatus ----
+(function () {
+  const a = pacingStatus({ gap: 10, daysRemaining: 70, deltaPerWeek: 2 });
+  check("comfortable rate -> onPace", a.onPace, true);
+  const b = pacingStatus({ gap: 20, daysRemaining: 7, deltaPerWeek: 1 });
+  check("tight rate -> not onPace", b.onPace, false);
+  ok("onPace label has no deficit words", !/behind|fail|weak|struggl|bad|worst/i.test(a.label));
+  ok("building label has no deficit words", !/behind|fail|weak|struggl|bad|worst/i.test(b.label));
 })();
 
 console.log("analyzer-progress.test.js: " + passed + " assertions passed");

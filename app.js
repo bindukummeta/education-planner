@@ -81,7 +81,7 @@
   // ---- view switching ----
   const VIEW_KEYS = [
     "dashboard", "schools", "log", "homework", "reading",
-    "mocks", "playcreate", "curiosity", "analyzer", "progress", "coach", "calendar", "settings",
+    "mocks", "playcreate", "curiosity", "analyzer", "progress", "gaptarget", "coach", "calendar", "settings",
   ];
   const VIEW_RENDER = {
     dashboard: () => renderDashboard(),
@@ -93,6 +93,7 @@
     curiosity: () => renderCuriosity(),
     analyzer: () => renderAnalyzer(),
     progress: () => renderProgress(),
+    gaptarget: () => renderGapToTarget(),
     coach: () => prepareCoach(),
     calendar: () => renderCalendar(),
     settings: () => renderSettings(),
@@ -934,6 +935,7 @@
       scorePct: pct,
       minutes: $("m-minutes").value === "" ? null : Number($("m-minutes").value),
       difficulty: normDifficulty($("m-difficulty").value),
+      schoolId: $("m-school").value || null,
       blobId: blobId,
       note: $("m-note").value.trim(),
     });
@@ -944,6 +946,15 @@
   }
   async function renderMocks() {
     revokeURLs();
+    // Populate the "Target school" picker (for tagging a mock to a school).
+    const schoolSel = $("m-school");
+    if (schoolSel) {
+      const schools = await EduStore.getSchools();
+      const cur = schoolSel.value;
+      schoolSel.innerHTML = '<option value="">— none —</option>' +
+        schools.map((s) => '<option value="' + esc(s.id) + '">' + esc(s.name) + "</option>").join("");
+      schoolSel.value = cur;
+    }
     const list = $("mock-list");
     const all = await EduStore.getMocks();
     if (!all.length) {
@@ -981,6 +992,116 @@
       });
       list.appendChild(row);
     }
+  }
+
+  // ============ GAP TO TARGET ============
+  // Map a neutral gap status onto an existing RAG colour + a display label.
+  function gapStatusMeta(status) {
+    const map = {
+      building: { cls: "rag-amber", text: "Building" },
+      "getting there": { cls: "rag-amber", text: "Getting there" },
+      meeting: { cls: "rag-green", text: "Meeting" },
+      exceeding: { cls: "rag-green", text: "Exceeding" },
+    };
+    return map[status] || { cls: "rag-none", text: "—" };
+  }
+  function gapChip(status) {
+    const m = gapStatusMeta(status);
+    return '<span class="gap-status ' + m.cls + '">' + m.text + "</span>";
+  }
+  // Recent score-improvement rate per week, used to project pacing to the exam.
+  function gapDeltaPerWeek(hwRows) {
+    const withScore = accuracyComplexityTrend(hwRows).filter((p) => p.scorePct != null);
+    if (withScore.length < 2) return 0;
+    const first = withScore[0], last = withScore[withScore.length - 1];
+    const weeks = Math.max(1 / 7, ((last.t || 0) - (first.t || 0)) / (7 * 86400000));
+    return (last.scorePct - first.scorePct) / weeks;
+  }
+
+  async function renderGapToTarget() {
+    const today = todayISO();
+    const schools = await EduStore.getSchools();
+    // One shared countdown: soonest future exam date across all schools.
+    const upcoming = schools
+      .filter((s) => s.examDate && s.examDate >= today)
+      .sort((a, b) => (a.examDate < b.examDate ? -1 : 1));
+    const cd = $("gap-countdown");
+    let daysRemaining = null;
+    if (cd) {
+      if (upcoming.length) {
+        daysRemaining = daysBetween(today, upcoming[0].examDate);
+        cd.innerHTML = '<div class="stat-num">' + daysRemaining + '</div><div class="stat-label">days to ' +
+          esc(upcoming[0].name) + " exam</div>";
+      } else {
+        cd.innerHTML = '<div class="stat-num">—</div><div class="stat-label">no upcoming exam date set</div>';
+      }
+    }
+    const wrap = $("gap-cards");
+    if (!wrap) return;
+    if (!schools.length) {
+      wrap.innerHTML = '<p class="empty">Add a school first, then upload its mock papers to set a target. 🌱</p>';
+      return;
+    }
+    const hwRows = await EduStore.getAnalyses({ source: "worksheet" });
+    const deltaPerWeek = gapDeltaPerWeek(hwRows);
+    const parts = [];
+    for (const s of schools) {
+      const mockRows = await EduStore.getAnalyses({ source: "mock", schoolId: s.id });
+      const profile = mockTargetProfile(mockRows);
+      let body;
+      if (!profile) {
+        body = '<p class="empty">Upload this school\'s mock paper to set its target. 🌱</p>';
+      } else {
+        // Prefer a parent-set pass mark, then the mock average, then the cut-off.
+        const passMark = (s.gapPassMark != null && s.gapPassMark !== "") ? Number(s.gapPassMark)
+          : (profile.passMark != null ? profile.passMark : latestCutoff(s));
+        const prof = Object.assign({}, profile, { passMark: passMark });
+        const gap = gapToTarget(hwRows, prof, {});
+        body = renderGapBody(gap, prof, s, daysRemaining, deltaPerWeek);
+      }
+      parts.push(
+        '<div class="card gap-card"><div class="gap-card-head"><h3>' + esc(s.name) + "</h3></div>" +
+        body + "</div>"
+      );
+    }
+    wrap.innerHTML = parts.join("");
+  }
+
+  // Build the inner blocks for one school's gap card.
+  function renderGapBody(gap, prof, school, daysRemaining, deltaPerWeek) {
+    if (!gap) return '<p class="empty">Upload this school\'s mock paper to set its target. 🌱</p>';
+    if (!gap.enoughData) {
+      return '<p class="empty">Scan a few more worksheets to see the gap build. 🌱</p>';
+    }
+    const cx = gap.complexity, acc = gap.accuracy, tp = gap.topics;
+    const overall = gap.overallStatus
+      ? '<div class="gap-overall">Overall: ' + gapChip(gap.overallStatus) + "</div>" : "";
+    // Complexity block.
+    const cxLine = '<div class="gap-dim"><span class="gap-dim-label">Complexity</span>' +
+      '<span class="gap-dim-val">recent ' + (cx.recent == null ? "—" : cx.recent) +
+      " vs target " + prof.complexityBand.mid + "</span>" + (cx.status ? gapChip(cx.status) : "") + "</div>";
+    // Topics block.
+    const topicBits = [];
+    if (tp.met.length) topicBits.push("on target: " + tp.met.map(esc).join(", "));
+    if (tp.weak.length) topicBits.push("building: " + tp.weak.map(esc).join(", "));
+    if (tp.missing.length) topicBits.push("not yet seen: " + tp.missing.map(esc).join(", "));
+    const topicLine = '<div class="gap-dim"><span class="gap-dim-label">Topics</span>' +
+      '<span class="gap-dim-val">' + (topicBits.length ? topicBits.join(" · ") : "—") + "</span></div>";
+    // Accuracy block.
+    const accLine = '<div class="gap-dim"><span class="gap-dim-label">Accuracy</span>' +
+      '<span class="gap-dim-val">recent ' + (acc.recent == null ? "—" : acc.recent + "%") +
+      " vs pass " + (acc.passMark == null ? "—" : acc.passMark + "%") + "</span>" +
+      (acc.status ? gapChip(acc.status) : "") + "</div>";
+    // Pacing line (only when there's an exam date to pace towards).
+    let pacingLine = "";
+    if (daysRemaining != null && school.examDate) {
+      const remaining = (acc.gap != null && acc.gap < 0) ? -acc.gap : 0;
+      const pace = pacingStatus({ gap: remaining, daysRemaining: daysRemaining, deltaPerWeek: deltaPerWeek });
+      pacingLine = '<div class="gap-pacing"><span class="gap-status ' +
+        (pace.onPace ? "rag-green" : "rag-amber") + '">' + esc(pace.label) + "</span>" +
+        '<span class="gap-pacing-detail">' + esc(pace.detail) + "</span></div>";
+    }
+    return overall + cxLine + topicLine + accLine + pacingLine;
   }
 
   // ============ CALENDAR ============
@@ -3372,6 +3493,166 @@
       worksheetsUsed: cx.length,
     };
   }
+
+  // ---- Gap-to-Target engine (per-school) --------------------------------
+  // A school's TARGET PROFILE is derived from its recorded MOCK PAPERS and the
+  // child's recent HOMEWORK is compared against it. All copy uses a neutral,
+  // growth-minded vocabulary ("building" → "getting there" → "meeting" →
+  // "exceeding") — never deficit / ability / identity language.
+
+  // Linear-interpolated percentile of an ascending numeric array.
+  function gapPercentile(sorted, p) {
+    if (!sorted.length) return null;
+    if (sorted.length === 1) return sorted[0];
+    const idx = p * (sorted.length - 1);
+    const lo = Math.floor(idx), hi = Math.ceil(idx);
+    if (lo === hi) return sorted[lo];
+    return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
+  }
+  // Where a recent complexity sits relative to the target band.
+  function gapBandStatus(recent, band) {
+    if (recent == null) return undefined;
+    if (recent > band.max) return "exceeding";
+    if (recent >= band.min) return "meeting";
+    return (band.min - recent) <= 0.5 ? "getting there" : "building";
+  }
+  // Where a recent accuracy sits relative to the pass mark.
+  function gapMarkStatus(recent, passMark) {
+    if (recent == null || passMark == null) return undefined;
+    const g = recent - passMark;
+    if (g >= 5) return "exceeding";
+    if (g >= 0) return "meeting";
+    if (g >= -10) return "getting there";
+    return "building";
+  }
+  // Ladder rank so "overall" can pick the gentlest (worst) of several statuses.
+  function gapStatusRank(s) {
+    return { building: 0, "getting there": 1, meeting: 2, exceeding: 3 }[s];
+  }
+
+  // Derive a school's target profile from its mock-paper analyses. Returns null
+  // when there are no mocks or no complexity recorded yet (caller hides the card).
+  function mockTargetProfile(mockRows) {
+    if (!mockRows || !mockRows.length) return null;
+    const flat = flattenAttempts(mockRows);
+    const totalAttempts = flat.length;
+    const cx = flat.map((a) => a.complexity).filter((c) => c).sort((a, b) => a - b);
+    if (!cx.length) return null;
+    let min, max;
+    if (cx.length >= 5) {
+      min = Math.round(gapPercentile(cx, 0.2));
+      max = Math.round(gapPercentile(cx, 0.8));
+    } else {
+      min = cx[0];
+      max = cx[cx.length - 1];
+    }
+    const mid = Math.round((cx.reduce((s, c) => s + c, 0) / cx.length) * 10) / 10;
+    const topics = topicMasteryOverTime(mockRows, { topN: null }).map((t) => ({
+      topic: t.topic,
+      weight: totalAttempts > 0 ? Math.round((t.total / totalAttempts) * 100) / 100 : 0,
+    }));
+    const scores = mockRows.map((r) => r.overall && r.overall.score).filter((s) => s != null);
+    const passMark = scores.length ? Math.round(scores.reduce((s, v) => s + v, 0) / scores.length) : null;
+    return {
+      complexityBand: { min: min, max: max, mid: mid },
+      topics: topics,
+      passMark: passMark,
+      sampleCount: mockRows.length,
+    };
+  }
+
+  // Compare recent homework against a school's target profile. Returns null with
+  // no profile; a neutral, verdict-free shape when there isn't enough homework yet.
+  function gapToTarget(homeworkRows, profile, opts) {
+    if (!profile) return null;
+    const recentN = (opts && opts.recentN) || 3;
+    const band = profile.complexityBand;
+    const list = (homeworkRows || []).slice().sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+    if (!list.length) {
+      return {
+        complexity: { recent: null, target: band.mid, gap: null },
+        topics: { missing: profile.topics.map((t) => t.topic), weak: [], met: [] },
+        accuracy: { recent: null, passMark: profile.passMark, gap: null },
+        enoughData: false,
+      };
+    }
+    // Recent complexity — average of the last few worksheets' avg complexity.
+    const recent = list.slice(-recentN);
+    const cxVals = [];
+    recent.forEach((r) => {
+      let avg = (r.overall && r.overall.avgComplexity != null) ? r.overall.avgComplexity : null;
+      if (avg == null) {
+        const vals = (r.attempts || []).map((a) => a.complexity).filter((c) => c);
+        avg = vals.length ? vals.reduce((s, c) => s + c, 0) / vals.length : null;
+      }
+      if (avg != null) cxVals.push(avg);
+    });
+    const recentCx = cxVals.length ? Math.round((cxVals.reduce((s, c) => s + c, 0) / cxVals.length) * 10) / 10 : null;
+    const cxGap = recentCx != null ? Math.round((recentCx - band.mid) * 10) / 10 : null;
+    const cxStatus = gapBandStatus(recentCx, band);
+    // Recent accuracy — average of the last few worksheets' overall score.
+    const trend = accuracyComplexityTrend(list);
+    const accVals = trend.slice(-recentN).map((p) => p.scorePct).filter((s) => s != null);
+    const recentAcc = accVals.length ? Math.round(accVals.reduce((s, v) => s + v, 0) / accVals.length) : null;
+    const accGap = (recentAcc != null && profile.passMark != null) ? recentAcc - profile.passMark : null;
+    const accStatus = gapMarkStatus(recentAcc, profile.passMark);
+    // Topic coverage — each profile topic against the child's homework topics.
+    const hwTopics = topicMasteryOverTime(homeworkRows, { topN: null });
+    const byTopic = {};
+    hwTopics.forEach((t) => { byTopic[t.topic] = t; });
+    const threshold = profile.passMark != null ? profile.passMark : 60;
+    const missing = [], weak = [], met = [];
+    profile.topics.forEach((pt) => {
+      const h = byTopic[pt.topic];
+      if (!h || h.total === 0) missing.push(pt.topic);
+      else if (h.pct == null) weak.push(pt.topic);
+      else if (h.pct >= threshold) met.push(pt.topic);
+      else weak.push(pt.topic);
+    });
+    let topicStatus;
+    if (missing.length) topicStatus = "building";
+    else if (weak.length) topicStatus = "getting there";
+    else if (met.length) topicStatus = "meeting";
+    // Overall = the gentlest (worst) of the three defined dimension statuses.
+    let overallStatus;
+    [cxStatus, topicStatus, accStatus].forEach((s) => {
+      if (s == null) return;
+      if (overallStatus == null || gapStatusRank(s) < gapStatusRank(overallStatus)) overallStatus = s;
+    });
+    return {
+      complexity: { recent: recentCx, target: band.mid, gap: cxGap, status: cxStatus },
+      topics: { missing: missing, weak: weak, met: met },
+      accuracy: { recent: recentAcc, passMark: profile.passMark, gap: accGap, status: accStatus },
+      overallStatus: overallStatus,
+      enoughData: true,
+    };
+  }
+
+  // Pacing guidance for an exam countdown. gap is the remaining distance to close
+  // (>=0); deltaPerWeek is the recent rate of closing it. Labels stay encouraging
+  // — never "behind" / "failing".
+  function pacingStatus(o) {
+    o = o || {};
+    const gap = o.gap || 0;
+    const daysRemaining = o.daysRemaining || 0;
+    const deltaPerWeek = o.deltaPerWeek || 0;
+    const weeksLeft = daysRemaining / 7;
+    const projectedClose = deltaPerWeek * weeksLeft;
+    const onPace = projectedClose >= gap;
+    let detail;
+    if (onPace) {
+      const weeksNeeded = deltaPerWeek > 0 ? gap / deltaPerWeek : 0;
+      const spare = Math.max(0, Math.round(weeksLeft - weeksNeeded));
+      detail = "At the recent rate, on track to close the gap with " + spare + " week" + (spare === 1 ? "" : "s") + " to spare.";
+    } else {
+      detail = "A steady bit more each week gets there.";
+    }
+    return {
+      onPace: onPace,
+      label: onPace ? "On pace 🌱" : "Building pace 💪",
+      detail: detail,
+    };
+  }
   // __ANALYTICS_END__
 
   // Working draft during a capture→review session (before it is saved).
@@ -3389,7 +3670,13 @@
 
   // Capture: pick/scan a printed worksheet photo, confirm subject, run OCR (local)
   // or opt-in cloud Vision analysis (enhanced, only when the master switch is ON).
-  async function openAnalyzerCapture() {
+  async function openAnalyzerCapture(opts) {
+    // opts lets a caller (e.g. the Mock Papers "Analyse with AI" button) reuse
+    // this whole capture→review→save pipeline while tagging the saved record with
+    // a different source and an optional target school. Defaults to a worksheet.
+    opts = opts || {};
+    const captureSource = opts.source || "worksheet";
+    const captureSchoolId = opts.schoolId || null;
     const masterOn = (await EduStore.getMeta("analyzer.enhancedAi.enabled")) === true;
     const subjOpts = SUBJECTS.map((s) =>
       '<option value="' + s + '"' + (s === "maths" ? " selected" : "") + ">" + esc(SUBJECT_LABEL[s]) + "</option>").join("");
@@ -3461,7 +3748,7 @@
       let analysis;
       try {
         analysis = await analyseWorksheet(blobs, {
-          mode: useEnhanced ? "enhanced" : "local", subject: subject, consent: consent,
+          mode: useEnhanced ? "enhanced" : "local", subject: subject, consent: consent, source: captureSource,
           onProgress: (p) => { bar.style.width = Math.round((p || 0) * 100) + "%"; },
         });
       } catch (err) {
@@ -3471,7 +3758,7 @@
         bar.style.width = "0%";
         txt.textContent = (err && err.message) || "The analysis didn't come back. Your photos are safe — you can review by hand.";
         const emptyDraft = {
-          source: "worksheet", mode: useEnhanced ? "enhanced" : "local",
+          source: captureSource, schoolId: captureSchoolId, mode: useEnhanced ? "enhanced" : "local",
           overall: { subject: subject, score: null, avgComplexity: null }, attempts: [],
         };
         if (!$("an-review-anyway")) {
@@ -3488,14 +3775,21 @@
         }
         return;
       }
-      anDraft = Object.assign({ blobId: blobId, blobIds: blobIds }, analysis);
+      anDraft = Object.assign({ blobId: blobId, blobIds: blobIds }, analysis, { source: captureSource, schoolId: captureSchoolId });
       openAnalyzerReview();
     });
     $("an-manual").addEventListener("click", () => {
       const subject = $("an-subject").value;
-      anDraft = { blobId: null, blobIds: [], source: "worksheet", mode: "local", overall: { subject: subject, score: null, avgComplexity: null }, attempts: [] };
+      anDraft = { blobId: null, blobIds: [], source: captureSource, schoolId: captureSchoolId, mode: "local", overall: { subject: subject, score: null, avgComplexity: null }, attempts: [] };
       openAnalyzerReview();
     });
+  }
+
+  // Thin wrapper: reuse the worksheet capture pipeline to analyse a school's mock
+  // paper, tagging the saved analysis with source:"mock" + the chosen schoolId.
+  function openMockAnalysisCapture(opts) {
+    opts = opts || {};
+    openAnalyzerCapture({ source: opts.source || "mock", schoolId: opts.schoolId || null });
   }
 
   // Page photos for the current draft as an array. Prefers the new blobIds[]
@@ -3694,6 +3988,7 @@
     const pageBlobIds = anDraftBlobIds();
     const record = {
       source: anDraft.source || "worksheet",
+      schoolId: anDraft.schoolId || null,
       mode: anDraft.mode || "local",
       provider: enhanced ? "anthropic" : null,
       aiConfidence: (anDraft.overall && anDraft.overall.aiConfidence) != null ? anDraft.overall.aiConfidence : null,
@@ -4003,6 +4298,7 @@
     $("homework-form").addEventListener("submit", submitHomework);
     $("reading-form").addEventListener("submit", submitReading);
     $("mock-form").addEventListener("submit", submitMock);
+    $("m-analyse").addEventListener("click", () => openMockAnalysisCapture({ source: "mock", schoolId: $("m-school").value }));
     $("m-raw").addEventListener("input", updateMockPct);
     $("m-max").addEventListener("input", updateMockPct);
     $("cal-prev").addEventListener("click", () => calShift(-1));
