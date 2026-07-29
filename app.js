@@ -1057,7 +1057,18 @@
           : (profile.passMark != null ? profile.passMark : latestCutoff(s));
         const prof = Object.assign({}, profile, { passMark: passMark });
         const gap = gapToTarget(hwRows, prof, {});
-        body = renderGapBody(gap, prof, s, daysRemaining, deltaPerWeek);
+        const mockBySubj = groupBySubject(mockRows);
+        const hwBySubj = groupBySubject(hwRows);
+        const bySubject = {};
+        Object.keys(mockBySubj).forEach((subj) => {
+          const sp = mockTargetProfile(mockBySubj[subj]);
+          if (!sp) return;
+          const pm = (s.gapPassMark != null && s.gapPassMark !== "") ? Number(s.gapPassMark)
+            : (sp.passMark != null ? sp.passMark : latestCutoff(s));
+          bySubject[subj] = { profile: Object.assign({}, sp, { passMark: pm }), homeworkRows: hwBySubj[subj] || [] };
+        });
+        const breakdown = schoolLevelBreakdown(bySubject);
+        body = renderLevelHeader(breakdown) + renderGapBody(gap, prof, s, daysRemaining, deltaPerWeek);
       }
       parts.push(
         '<div class="card gap-card"><div class="gap-card-head"><h3>' + esc(s.name) + "</h3></div>" +
@@ -1065,6 +1076,30 @@
       );
     }
     wrap.innerHTML = parts.join("");
+  }
+
+  // ---- Levels (0–10) header — DOM string builders over schoolLevelBreakdown ----
+  function levelPct(n) { return n == null ? 0 : Math.max(0, Math.min(100, (n / 10) * 100)); }
+  function levelMeter(current, target) {
+    return '<div class="lvl-meter"><div class="lvl-meter-fill" style="width:' + levelPct(current) + '%"></div>' +
+      (target != null ? '<div class="lvl-meter-target" style="left:' + levelPct(target) + '%"></div>' : "") + "</div>";
+  }
+  function renderLevelHeader(breakdown) {
+    if (!breakdown || !breakdown.subjects.length) return "";
+    const o = breakdown.overall;
+    const cur = o.current == null ? "—" : o.current;
+    const tgt = o.target == null ? "—" : o.target;
+    const chip = (o.enoughData && o.status) ? gapChip(o.status) : "";
+    const note = o.enoughData ? "" : '<div class="lvl-note">Scan a few worksheets per subject to see levels build. 🌱</div>';
+    const head = '<div class="lvl-head"><div class="lvl-head-top"><span class="lvl-head-title">Level ' + cur +
+      ' <span class="lvl-arrow">→</span> target ' + tgt + "</span>" + chip + "</div>" + levelMeter(o.current, o.target) + note + "</div>";
+    const rows = breakdown.subjects.map((r) => {
+      const rc = r.current == null ? "—" : r.current, rt = r.target == null ? "—" : r.target;
+      const rchip = (r.enoughData && r.status) ? gapChip(r.status) : "";
+      return '<div class="lvl-row"><div class="lvl-row-head"><span class="lvl-row-subject">' + esc(r.subject) +
+        '</span><span class="lvl-row-val">' + rc + " → " + rt + "</span>" + rchip + "</div>" + levelMeter(r.current, r.target) + "</div>";
+    }).join("");
+    return '<div class="lvl-block">' + head + '<div class="lvl-rows">' + rows + "</div></div>";
   }
 
   // Build the inner blocks for one school's gap card.
@@ -3652,6 +3687,75 @@
       label: onPace ? "On pace 🌱" : "Building pace 💪",
       detail: detail,
     };
+  }
+
+  // ---- Levels (0–10) — composite progression layer over Gap-to-Target ----
+  var LEVEL_WEIGHTS = { complexity: 0.4, accuracy: 0.35, coverage: 0.25 };
+  function clamp010(n) { return Math.max(0, Math.min(10, n)); }
+  function roundHalf(n) { return n == null ? null : Math.round(n * 2) / 2; }
+  function cxToLevel(cx) { return cx == null ? null : clamp010(((cx - 1) / 4) * 10); }
+  function accToLevel(pct) { return pct == null ? null : clamp010(pct / 10); }
+  // Weighted blend, re-normalised over whichever components are present.
+  function levelScore(parts) {
+    var comps = [];
+    if (parts.complexity != null) comps.push(["complexity", parts.complexity]);
+    if (parts.accuracy != null) comps.push(["accuracy", parts.accuracy]);
+    if (parts.coverage != null) comps.push(["coverage", parts.coverage]);
+    if (!comps.length) return null;
+    var wsum = 0, acc = 0;
+    comps.forEach(function (c) { wsum += LEVEL_WEIGHTS[c[0]]; acc += LEVEL_WEIGHTS[c[0]] * c[1]; });
+    return wsum > 0 ? clamp010(acc / wsum) : null;
+  }
+  // Neutral status for a level vs its target (reuses the Gap ladder vocabulary).
+  function levelStatus(current, target) {
+    if (current == null || target == null) return undefined;
+    var g = current - target;
+    if (g >= 0.5) return "exceeding";
+    if (g >= 0) return "meeting";
+    if (g >= -1) return "getting there";
+    return "building";
+  }
+  // Current + target level for ONE subject's homework vs a target profile.
+  function subjectLevel(homeworkRows, profile) {
+    if (!profile) return null;
+    var gap = gapToTarget(homeworkRows, profile, {});
+    if (!gap) return null;
+    var total = gap.topics.met.length + gap.topics.weak.length + gap.topics.missing.length;
+    var target = levelScore({
+      complexity: cxToLevel(profile.complexityBand.mid),
+      accuracy: accToLevel(profile.passMark),
+      coverage: total > 0 ? 10 : null,
+    });
+    if (!gap.enoughData) return { current: null, target: roundHalf(target), status: undefined, enoughData: false };
+    var current = levelScore({
+      complexity: cxToLevel(gap.complexity.recent),
+      accuracy: accToLevel(gap.accuracy.recent),
+      coverage: total > 0 ? clamp010((gap.topics.met.length / total) * 10) : null,
+    });
+    return { current: roundHalf(current), target: roundHalf(target), status: levelStatus(current, target), enoughData: true };
+  }
+  // Group analysis rows by overall.subject (pure helper for the breakdown).
+  function groupBySubject(rows) {
+    var out = {};
+    (rows || []).forEach(function (r) {
+      var subj = (r.overall && r.overall.subject) || "general";
+      (out[subj] || (out[subj] = [])).push(r);
+    });
+    return out;
+  }
+  // Whole-school breakdown. bySubject = { subject: { homeworkRows, profile } }.
+  function schoolLevelBreakdown(bySubject) {
+    var rows = [];
+    Object.keys(bySubject || {}).forEach(function (subj) {
+      var e = bySubject[subj] || {};
+      var lvl = subjectLevel(e.homeworkRows || [], e.profile);
+      if (lvl) rows.push(Object.assign({ subject: subj }, lvl));
+    });
+    var mean = function (a) { return a.length ? a.reduce(function (s, v) { return s + v; }, 0) / a.length : null; };
+    var cur = rows.filter(function (r) { return r.current != null; }).map(function (r) { return r.current; });
+    var tgt = rows.filter(function (r) { return r.target != null; }).map(function (r) { return r.target; });
+    var oCur = roundHalf(mean(cur)), oTgt = roundHalf(mean(tgt));
+    return { overall: { current: oCur, target: oTgt, status: levelStatus(oCur, oTgt), enoughData: cur.length > 0 }, subjects: rows };
   }
   // __ANALYTICS_END__
 

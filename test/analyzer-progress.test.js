@@ -30,7 +30,8 @@ vm.runInContext(
     "\n;this.__x = { anOutcome, flattenAttempts, topicMasteryOverTime, " +
     "accuracyComplexityTrend, errorPatternEvolution, independenceTrend, approvedVsUnconfirmed, " +
     "expectedComplexityForYear, standardComparison, " +
-    "mockTargetProfile, gapToTarget, pacingStatus };",
+    "mockTargetProfile, gapToTarget, pacingStatus, " +
+    "levelScore, subjectLevel, schoolLevelBreakdown, cxToLevel, accToLevel, levelStatus, groupBySubject, roundHalf };",
   sandbox,
   { filename: "app.js#analyzer-progress" }
 );
@@ -39,6 +40,7 @@ const {
   accuracyComplexityTrend, errorPatternEvolution, independenceTrend, approvedVsUnconfirmed,
   expectedComplexityForYear, standardComparison,
   mockTargetProfile, gapToTarget, pacingStatus,
+  levelScore, subjectLevel, schoolLevelBreakdown, cxToLevel, accToLevel, levelStatus, groupBySubject, roundHalf,
 } = sandbox.__x;
 assert.strictEqual(typeof topicMasteryOverTime, "function", "topicMasteryOverTime not extracted");
 
@@ -237,6 +239,59 @@ check("approved vs unconfirmed counts", approvedVsUnconfirmed(rows),
   check("tight rate -> not onPace", b.onPace, false);
   ok("onPace label has no deficit words", !/behind|fail|weak|struggl|bad|worst/i.test(a.label));
   ok("building label has no deficit words", !/behind|fail|weak|struggl|bad|worst/i.test(b.label));
+})();
+
+// ---- Levels (0–10) ----
+(function () {
+  check("cxToLevel(1)=0", cxToLevel(1), 0);
+  check("cxToLevel(5)=10", cxToLevel(5), 10);
+  check("cxToLevel(3.5)=6.25", cxToLevel(3.5), 6.25);
+  check("accToLevel(70)=7", accToLevel(70), 7);
+  check("accToLevel(null)=null", accToLevel(null), null);
+  // Re-normalisation: missing accuracy shifts weight onto the rest, not to 0.
+  ok("levelScore re-normalises when a component is null", levelScore({ complexity: 5, accuracy: null, coverage: 5 }) === 5);
+  check("levelStatus meeting", levelStatus(7.5, 7.5), "meeting");
+  check("levelStatus exceeding", levelStatus(9, 7.5), "exceeding");
+  check("levelStatus getting there", levelStatus(7, 7.5), "getting there");
+  check("levelStatus building", levelStatus(4, 7.5), "building");
+  ok("level statuses use only neutral vocab",
+    !/behind|fail|weak|struggl|bad|poor|slow|worst/i.test([
+      levelStatus(9,7.5), levelStatus(7.5,7.5), levelStatus(7,7.5), levelStatus(4,7.5)].join(" ")));
+
+  var prof = { complexityBand: { min: 3, max: 4, mid: 3.5 }, topics: [{ topic: "fractions", weight: 0.5 }, { topic: "decimals", weight: 0.5 }], passMark: 70, sampleCount: 2 };
+  // Full mastery: recentCx=mid, acc=passMark, all topics met -> current == target.
+  var hwFull = [{ createdAt: 1, overall: { subject: "maths", score: 70, avgComplexity: 3.5 }, attempts: [
+    { topic: "fractions", complexity: 3, marksAwarded: 7, marksAvailable: 10 },
+    { topic: "decimals", complexity: 3, marksAwarded: 7, marksAvailable: 10 }] }];
+  var sl = subjectLevel(hwFull, prof);
+  check("full mastery current==target", sl.current, sl.target);
+  check("full mastery lands at target 7.5", sl.current, 7.5);
+  check("full mastery status meeting", sl.status, "meeting");
+  // Empty homework -> current null, enoughData false, target still numeric.
+  var slEmpty = subjectLevel([], prof);
+  check("empty hw -> current null", slEmpty.current, null);
+  ok("empty hw -> enoughData false", slEmpty.enoughData === false);
+  ok("empty hw -> target is a number", typeof slEmpty.target === "number");
+  // Monotonicity: higher accuracy never lowers the level (same cx/topics).
+  var mk = function (score) { return [{ createdAt: 1, overall: { subject: "maths", score: score, avgComplexity: 3.5 }, attempts: [
+    { topic: "fractions", complexity: 3, marksAwarded: 7, marksAvailable: 10 },
+    { topic: "decimals", complexity: 3, marksAwarded: 7, marksAvailable: 10 }] }]; };
+  ok("higher accuracy >= lower accuracy level", subjectLevel(mk(90), prof).current >= subjectLevel(mk(60), prof).current);
+  // Tiffin-style worked example: high band + high pass mark.
+  var tiffin = { complexityBand: { min: 4, max: 5, mid: 4.2 }, topics: [{ topic: "fractions", weight: 0.5 }, { topic: "algebra", weight: 0.5 }], passMark: 80, sampleCount: 3 };
+  var tHw = [{ createdAt: 1, overall: { subject: "maths", score: 65, avgComplexity: 3.5 }, attempts: [
+    { topic: "fractions", complexity: 3, marksAwarded: 9, marksAvailable: 10 }] }];
+  var tsl = subjectLevel(tHw, tiffin);
+  check("Tiffin target 8.5", tsl.target, 8.5);
+  check("Tiffin current 6", tsl.current, 6);
+  check("Tiffin status building", tsl.status, "building");
+  // groupBySubject + schoolLevelBreakdown overall = mean of subjects.
+  var g = groupBySubject([{ overall: { subject: "maths" } }, { overall: { subject: "english" } }, { overall: { subject: "maths" } }]);
+  check("groupBySubject buckets", [g.maths.length, g.english.length], [2, 1]);
+  var bd = schoolLevelBreakdown({ maths: { homeworkRows: hwFull, profile: prof }, english: { homeworkRows: mk(60), profile: prof } });
+  check("breakdown has 2 subject rows", bd.subjects.length, 2);
+  var expected = roundHalf((bd.subjects[0].current + bd.subjects[1].current) / 2);
+  check("overall current = mean of subjects", bd.overall.current, expected);
 })();
 
 console.log("analyzer-progress.test.js: " + passed + " assertions passed");

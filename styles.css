@@ -1015,3 +1015,18 @@ body.no-tabbar .tabbar { display: none; }
 .gap-status.rag-none { background: var(--card-2); color: var(--muted); border: 1px solid var(--border-strong); }
 .gap-pacing { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
 .gap-pacing-detail { font-size: 13px; color: var(--muted); flex: 1; min-width: 160px; }
+
+/* ---- Levels (0–10) ---- */
+.lvl-block { margin-bottom: 14px; }
+.lvl-head { padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+.lvl-head-top { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.lvl-head-title { font-size: 16px; font-weight: 800; letter-spacing: -0.01em; color: var(--text); }
+.lvl-arrow { color: var(--muted); font-weight: 700; }
+.lvl-note { font-size: 13px; color: var(--muted); margin-top: 8px; }
+.lvl-meter { position: relative; height: 10px; border-radius: var(--r-pill); background: var(--card-2); border: 1px solid var(--border); overflow: hidden; }
+.lvl-meter-fill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent); border-radius: var(--r-pill); transition: width .3s ease; }
+.lvl-meter-target { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--accent-strong); }
+.lvl-rows { margin-top: 12px; display: flex; flex-direction: column; gap: 10px; }
+.lvl-row-head { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
+.lvl-row-subject { font-size: 13px; font-weight: 800; text-transform: capitalize; color: var(--text); flex: 1; }
+.lvl-row-val { font-size: 13px; font-weight: 700; color: var(--muted); }
