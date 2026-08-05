@@ -7,6 +7,9 @@
     },
     "api/analyse-homework.js": {
       "maxDuration": 300
+    },
+    "api/generate-practice.js": {
+      "maxDuration": 30
     }
   },
   "headers": [

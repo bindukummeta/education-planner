@@ -5,6 +5,49 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Practice — generate similar questions with AI (opt-in, all subjects)
+
+- **"Generate similar (AI) ✨" for any subject.** Blind-spot buckets the offline
+  engine can't reproduce — English and every non-maths subject, plus maths topics
+  like fractions, geometry, and measures — now offer a cloud-generated practice
+  option. It creates fresh, auto-checkable questions that mirror the same skill
+  and difficulty as the child's own wrong questions.
+- **Off by default, gated + consented.** The button only appears when the
+  **Enhanced AI** master switch is on, and each use asks for explicit consent
+  before anything leaves the device. **Privacy by design:** only the derived
+  question text and expected answers are sent — never photos, names, or notes.
+- **Bonus practice, checked the same way.** Generated questions run through the
+  same session loop and lenient matching as offline practice, and (like the maths
+  generator) they're ephemeral bonus reps that never graduate the stored list.
+- **Under the hood.** New serverless endpoint `api/generate-practice.js`
+  (Anthropic, Structured Outputs for guaranteed-valid JSON) mirroring the coach
+  and analyse-homework conventions; new client `generatePracticeQuestions()`; new
+  `test/generate-practice-api.test.js`. Service worker cache bumped v54 → v55.
+
+### Practice — re-attempt weak-area questions (offline)
+
+- **New "Practice" section.** Questions the Homework Analyzer marked incorrect or
+  partial are grouped into weak-area buckets by **subject + topic + error type**
+  and offered back to the child to try again, so practice targets real blind
+  spots rather than random drills. Fully offline — it reads the worksheet
+  attempts already stored on-device.
+- **Answer once, master, clear.** The child types an answer; it's checked
+  leniently against the expected answer the Analyzer recorded (trim / case /
+  spacing insensitive, and `1/2` counts as `0.5`). Questions with no stored
+  expected answer fall back to a **"Show answer"** flashcard reveal, and a parent
+  can **"Mark it right anyway"** to override the auto-check. Each question clears
+  from the list after 2 correct attempts. Per-question mastery persists in meta
+  (`practiceMastery.<studentId>`) so it survives across devices via backup/sync.
+- **Generate more (maths).** For arithmetic blind-spot buckets, a **"Generate
+  more like these ✨"** button reuses the offline Number Ninja generator to serve
+  fresh, auto-checkable questions of the same operation (+, −, ×, ÷, or order of
+  operations), inferred from the operators in the child's own wrong questions.
+  These generated reps are bonus practice — they're checked leniently but do not
+  graduate the stored blind-spot list. Still fully offline; no AI/network.
+- **Under the hood.** New pure, unit-tested analytics (`blindSpotGroups`,
+  `normalizeAnswer`, `answersMatch`, `mathsNinjaCatForGroup`) added to the shared
+  analytics block. Service worker cache bumped v52 → v54.
+
 ### Cross-device Family Sync (optional, offline-first)
 
 - **New: optional cloud sync via Supabase.** A new "Family Sync" card in Settings

@@ -81,7 +81,7 @@
   // ---- view switching ----
   const VIEW_KEYS = [
     "dashboard", "schools", "log", "homework", "reading",
-    "mocks", "playcreate", "curiosity", "analyzer", "progress", "gaptarget", "coach", "calendar", "settings",
+    "mocks", "playcreate", "curiosity", "analyzer", "practice", "progress", "gaptarget", "coach", "calendar", "settings",
   ];
   const VIEW_RENDER = {
     dashboard: () => renderDashboard(),
@@ -92,6 +92,7 @@
     playcreate: () => renderPlayCreate(),
     curiosity: () => renderCuriosity(),
     analyzer: () => renderAnalyzer(),
+    practice: () => renderPractice(),
     progress: () => renderProgress(),
     gaptarget: () => renderGapToTarget(),
     coach: () => prepareCoach(),
@@ -3357,6 +3358,9 @@
           parentApproved: !!a.parentApproved,
           marksAwarded: a.marksAwarded,
           marksAvailable: a.marksAvailable,
+          questionText: a.questionText || "",
+          expectedAnswer: a.expectedAnswer,
+          studentAnswer: a.studentAnswer,
         });
       });
     });
@@ -3471,6 +3475,137 @@
     let approved = 0;
     flat.forEach((a) => { if (a.parentApproved) approved++; });
     return { approved: approved, unconfirmed: flat.length - approved, total: flat.length };
+  }
+
+  // Normalize a short answer for lenient comparison: trim, lowercase, collapse
+  // inner whitespace, and strip trailing punctuation. Also reused as a stable
+  // dedupe/mastery key for a question's text.
+  function normalizeAnswer(s) {
+    return String(s == null ? "" : s)
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, " ")
+      .replace(/[\s.,;:!?]+$/g, "");
+  }
+  // Parse a short answer as a number when it is a plain integer/decimal or a
+  // simple "a/b" fraction; otherwise null. Lets "1/2" match "0.5".
+  function answerToNumber(s) {
+    const t = String(s == null ? "" : s).trim();
+    if (/^-?\d+(\.\d+)?$/.test(t)) return parseFloat(t);
+    const m = t.match(/^(-?\d+)\s*\/\s*(-?\d+)$/);
+    if (m) {
+      const den = parseFloat(m[2]);
+      if (den !== 0) return parseFloat(m[1]) / den;
+    }
+    return null;
+  }
+  // Lenient answer match: equal after normalization, or numerically equal when
+  // both sides parse as a number/fraction. Callers must only auto-check when an
+  // expected answer actually exists (two blank strings would otherwise match).
+  function answersMatch(a, b) {
+    if (normalizeAnswer(a) === normalizeAnswer(b)) return true;
+    const na = answerToNumber(a), nb = answerToNumber(b);
+    if (na != null && nb != null) return Math.abs(na - nb) < 1e-9;
+    return false;
+  }
+
+  // Group wrong (incorrect/partial) worksheet questions into weak-area buckets
+  // for re-practice. Bucket key is subject + topic + errorType (empty errorType
+  // → "other"), matching how the parent categorised the mistake. Within a bucket
+  // repeated question texts are deduped (most recent kept, carrying its expected
+  // answer). Buckets are ordered most-frequent first, then most-recent. Pure over
+  // the rows; the caller applies per-question mastery to hide graduated ones.
+  function blindSpotGroups(rows, opts) {
+    opts = opts || {};
+    const flat = flattenAttempts(rows).filter((a) =>
+      (a.outcome === "incorrect" || a.outcome === "partial") && (a.questionText || "").trim());
+    const groups = {};
+    flat.forEach((a) => {
+      const subject = a.subject || "";
+      const topic = a.topic || "general";
+      const errorType = a.errorType || "other";
+      const key = subject + "|" + topic + "|" + errorType;
+      const g = groups[key] || (groups[key] = {
+        key: key, subject: subject, topic: topic, errorType: errorType,
+        count: 0, lastSeen: 0, byText: {},
+      });
+      g.count++;
+      if ((a.createdAt || 0) > g.lastSeen) g.lastSeen = a.createdAt || 0;
+      const qkey = normalizeAnswer(a.questionText);
+      const prev = g.byText[qkey];
+      if (!prev || (a.createdAt || 0) >= (prev.createdAt || 0)) {
+        g.byText[qkey] = {
+          qkey: qkey,
+          questionText: a.questionText,
+          expectedAnswer: a.expectedAnswer == null ? null : a.expectedAnswer,
+          studentAnswer: a.studentAnswer == null ? null : a.studentAnswer,
+          complexity: a.complexity || null,
+          createdAt: a.createdAt || 0,
+        };
+      }
+    });
+    const result = Object.keys(groups).map((k) => {
+      const g = groups[k];
+      const questions = Object.keys(g.byText).map((t) => g.byText[t])
+        .sort((x, y) => (y.createdAt || 0) - (x.createdAt || 0));
+      return {
+        key: g.key, subject: g.subject, topic: g.topic, errorType: g.errorType,
+        count: g.count, uniqueCount: questions.length, lastSeen: g.lastSeen,
+        questions: questions,
+      };
+    });
+    result.sort((a, b) => (b.count - a.count) || (b.lastSeen - a.lastSeen));
+    return result;
+  }
+
+  // Map a blind-spot group to a Number Ninja generator category so we can offer
+  // fresh, auto-checkable practice of the same skill (Phase 2, fully offline).
+  // Only maths arithmetic maps: the Ninja engine generates pure +/−/×/÷/BODMAS/
+  // negatives, so topics it can't faithfully reproduce (fractions, geometry,
+  // measures, money, time, word-problems) return null and stay reveal-only. The
+  // operator SNIFF looks across the group's stored question texts so an
+  // "arithmetic"/"general" bucket resolves to the operation the child actually
+  // met most. Returns a NINJA_CATS key or null. Pure (no DOM/storage).
+  function mathsNinjaCatForGroup(group) {
+    if (!group || group.subject !== "maths") return null;
+    const topic = group.topic || "general";
+    // Topics the Ninja engine cannot reproduce faithfully → reveal-only.
+    const NON_GENERABLE = {
+      fractions: 1, decimals: 1, percentages: 1, geometry: 1,
+      measures: 1, time: 1, money: 1,
+    };
+    if (NON_GENERABLE[topic]) return null;
+    // Tally operators across the group's question texts. Order matters only for
+    // ties: a "−" that crosses zero is impossible to know here, so plain
+    // subtraction wins and "negatives" is never auto-picked (it can still be
+    // reached via the mixed default below when nothing else appears).
+    const text = (group.questions || []).map((q) => q && q.questionText || "").join("  ");
+    const tally = {
+      multiply: (text.match(/[×x*]/g) || []).length,
+      divide: (text.match(/[÷\/]/g) || []).length,
+      add: (text.match(/\+/g) || []).length,
+      subtract: (text.match(/[−-]/g) || []).length,
+    };
+    // BODMAS when a single question chains ≥2 different operators.
+    const chained = (group.questions || []).some((q) => {
+      const t = (q && q.questionText) || "";
+      const kinds = ["+", "-", "−", "×", "x", "*", "÷", "/"].filter((s) => t.indexOf(s) >= 0);
+      const distinct = {};
+      kinds.forEach((s) => {
+        const norm = (s === "x" || s === "*") ? "×" : (s === "−") ? "-" : (s === "/") ? "÷" : s;
+        distinct[norm] = 1;
+      });
+      return Object.keys(distinct).length >= 2;
+    });
+    if (chained) return "bodmas";
+    let best = null, bestN = 0;
+    ["multiply", "divide", "add", "subtract"].forEach((c) => {
+      if (tally[c] > bestN) { bestN = tally[c]; best = c; }
+    });
+    if (best) return best;
+    // Arithmetic topic with no readable operator (e.g. worded) → mixed via add.
+    if (topic === "arithmetic") return "add";
+    return null;
   }
 
   // Expected complexity band (on the app's 1..5 estimate scale) for a UK school
@@ -4265,6 +4400,333 @@
     if (cv) drawTrendChart(cv, trend.map((p) => ({ t: p.t, pct: p.scorePct, cx: p.avgComplexity })), { label: "Accuracy over time" });
   }
   // ========== END HOMEWORK ANALYZER ==========
+
+  // ============ PRACTICE (weak-area re-attempts) ============
+  // Re-practise questions the Analyzer marked incorrect/partial, grouped by
+  // subject + topic + error type (via the pure blindSpotGroups). Per-question
+  // mastery lives in meta (same seam as the games) so it persists across
+  // devices via backup/sync. Shape: { [groupKey::qkey]: { seen, correct } }.
+  const PRACTICE_MASTER_AT = 2; // correct answers before a question is cleared
+
+  async function loadPracticeMastery() {
+    const sid = await EduStore.getActiveStudentId();
+    const map = await EduStore.getMeta("practiceMastery." + sid);
+    return { key: "practiceMastery." + sid, map: map || {} };
+  }
+  function practiceQKey(group, q) { return group.key + "::" + q.qkey; }
+  function practiceGroupLabel(group) {
+    const subj = SUBJECT_LABEL[group.subject] || group.subject || "General";
+    const bits = [subj];
+    if (group.topic && group.topic !== "general") bits.push(group.topic);
+    const err = (AN_ERROR_CATEGORIES.find((c) => c.key === group.errorType) || {}).label || "";
+    return { label: bits.join(" · "), err: err };
+  }
+
+  async function renderPractice() {
+    const el = $("practice-list");
+    if (!el) return;
+    const groups = blindSpotGroups(await EduStore.getAnalyses());
+    const { map: mastery } = await loadPracticeMastery();
+    // Enhanced-AI master switch gates the cloud "generate similar" affordance for
+    // groups the offline Ninja engine can't reproduce (all non-maths, plus maths
+    // topics like fractions/geometry). Consent is still asked per use before send.
+    const aiOn = (await EduStore.getMeta("analyzer.enhancedAi.enabled")) === true;
+    // Keep only groups with questions not yet cleared (correct < PRACTICE_MASTER_AT).
+    const active = groups.map((g) => ({
+      group: g,
+      remaining: g.questions.filter((q) => {
+        const rec = mastery[practiceQKey(g, q)];
+        return !rec || (rec.correct || 0) < PRACTICE_MASTER_AT;
+      }),
+    })).filter((x) => x.remaining.length > 0);
+
+    if (!active.length) {
+      el.innerHTML = '<div class="card"><p class="empty">' + (groups.length
+        ? "Every practice question has been mastered — brilliant work! 🌟 Scan more worksheets to keep the practice growing."
+        : "No practice questions yet. When a scanned worksheet has a question that didn't go quite right, it'll appear here to try again. 🌱") + "</p></div>";
+      return;
+    }
+
+    el.innerHTML = active.map((x, i) => {
+      const info = practiceGroupLabel(x.group);
+      const n = x.remaining.length;
+      const errChip = info.err ? '<span class="chip">' + esc(info.err) + "</span>" : "";
+      // Maths arithmetic groups can generate fresh, auto-checkable practice
+      // offline via the Ninja engine. Everything else can be regenerated by the
+      // cloud AI (opt-in) so the two buttons are mutually exclusive per group.
+      const canNinja = !!mathsNinjaCatForGroup(x.group);
+      const genBtn = canNinja
+        ? '<button type="button" class="btn-secondary practice-generate" data-i="' + i + '">Generate more like these ✨</button>'
+        : (aiOn
+          ? '<button type="button" class="btn-secondary practice-ai" data-i="' + i + '">Generate similar (AI) ✨</button>'
+          : "");
+      return '<div class="card practice-group">' +
+        '<div class="practice-head"><h3>' + esc(info.label) + "</h3>" + errChip + "</div>" +
+        '<p class="hint">' + n + " " + (n === 1 ? "question" : "questions") + " to practise 🌱</p>" +
+        '<div class="practice-actions">' +
+        '<button type="button" class="btn-primary practice-start" data-i="' + i + '">Practise</button>' +
+        genBtn + "</div></div>";
+    }).join("");
+    el.querySelectorAll(".practice-start").forEach((b) => {
+      b.addEventListener("click", () => {
+        const x = active[parseInt(b.dataset.i, 10)];
+        openPracticeSession(x.group, x.remaining);
+      });
+    });
+    el.querySelectorAll(".practice-generate").forEach((b) => {
+      b.addEventListener("click", () => {
+        const x = active[parseInt(b.dataset.i, 10)];
+        const extra = buildGeneratedPracticeRound(x.group, 5);
+        if (extra.length) openPracticeSession(x.group, extra, { generatedRound: true });
+      });
+    });
+    el.querySelectorAll(".practice-ai").forEach((b) => {
+      b.addEventListener("click", () => {
+        const x = active[parseInt(b.dataset.i, 10)];
+        startAiPractice(x.group, x.remaining);
+      });
+    });
+  }
+
+  // Number Ninja category this group can generate fresh practice for (or null).
+  // Kept out of the pure block because it just reads the pure mapping; the games'
+  // generator (buildNinjaQuestion) lives in the same IIFE scope.
+  function practiceNinjaCat(group) { return mathsNinjaCatForGroup(group); }
+
+  // Turn one generated Ninja question into the practice loop's question shape.
+  // `generated:true` marks it ephemeral so it never writes practiceMastery (that
+  // store graduates the STORED blind-spot list; generated rounds are bonus reps).
+  function ninjaToPracticeQ(cat, rng) {
+    const q = buildNinjaQuestion(cat, rng || Math.random);
+    return {
+      questionText: q.prompt + " = ?",
+      expectedAnswer: String(q.answer),
+      studentAnswer: null,
+      qkey: "gen:" + q.prompt,
+      generated: true,
+    };
+  }
+  function buildGeneratedPracticeRound(group, count) {
+    const cat = practiceNinjaCat(group);
+    if (!cat) return [];
+    const out = [];
+    for (let i = 0; i < count; i++) out.push(ninjaToPracticeQ(cat, Math.random));
+    return out;
+  }
+
+  // Cloud (opt-in) practice generation for groups the offline engine can't
+  // reproduce. Sends ONLY derived wrong-question text + expected answers — never
+  // photos, names, or notes. Gated on the master switch + being online; the
+  // caller collects per-use consent first. Returns practice-shaped questions
+  // marked generated:true (ephemeral — they never write practiceMastery).
+  async function generatePracticeQuestions(group, count) {
+    const enabled = await EduStore.getMeta("analyzer.enhancedAi.enabled");
+    if (enabled !== true && enabled !== "true") {
+      throw new Error("Enhanced AI is turned off. You can turn it on in Settings.");
+    }
+    if (!navigator.onLine) {
+      throw new Error("You're offline — connect to the internet to generate practice.");
+    }
+    // Forward at most a handful of examples for skill/difficulty reference.
+    const samples = (group.questions || [])
+      .filter((q) => q && (q.questionText || "").trim())
+      .slice(0, 6)
+      .map((q) => ({
+        questionText: String(q.questionText),
+        expectedAnswer: q.expectedAnswer != null ? String(q.expectedAnswer) : "",
+      }));
+    if (!samples.length) throw new Error("There are no questions to base practice on.");
+    const res = await fetch("/api/generate-practice", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        subject: group.subject || "",
+        topic: group.topic || "",
+        errorType: group.errorType || "",
+        samples: samples,
+        count: count || 5,
+      }),
+    });
+    let data = null;
+    try { data = await res.json(); } catch (_) { data = null; }
+    if (!res.ok) throw new Error((data && data.error) || ("HTTP " + res.status));
+    const arr = Array.isArray(data && data.questions) ? data.questions : [];
+    const mapped = arr
+      .map((q, i) => ({
+        questionText: String((q && q.questionText) || "").trim(),
+        expectedAnswer: String((q && q.expectedAnswer) || "").trim(),
+        hint: String((q && q.hint) || "").trim(),
+        studentAnswer: null,
+        qkey: "ai:" + i + ":" + String((q && q.questionText) || ""),
+        generated: true,
+      }))
+      .filter((q) => q.questionText && q.expectedAnswer);
+    if (!mapped.length) throw new Error("No usable practice questions came back. Please try again.");
+    return mapped;
+  }
+
+  // Per-use consent gate → generate → run the practice loop over the AI batch.
+  // Consent is asked every time (nothing is remembered) since data leaves the
+  // device; the child's stored blind-spot list is untouched (generated reps).
+  function startAiPractice(group, remaining) {
+    const info = practiceGroupLabel(group);
+    openModal("Generate similar practice ✨",
+      '<p class="hint">We\'ll send just the text of these ' + (info.label ? esc(info.label) + " " : "") +
+      "questions (and their answers) securely to create fresh ones to practise. " +
+      "No photos, names, or notes are sent.</p>" +
+      '<label class="an-consent"><input type="checkbox" id="ai-practice-consent"> ' +
+      "I understand this question text will be sent securely to generate practice.</label>" +
+      '<div class="vq-feedback" id="ai-practice-status"></div>' +
+      '<div class="form-actions">' +
+      '<button type="button" id="ai-practice-go" class="btn-primary" disabled>Generate</button>' +
+      '<button type="button" id="ai-practice-cancel" class="btn-secondary">Cancel</button>' +
+      "</div>");
+    const consent = $("ai-practice-consent");
+    const go = $("ai-practice-go");
+    const status = $("ai-practice-status");
+    consent.addEventListener("change", () => { go.disabled = !consent.checked; });
+    $("ai-practice-cancel").addEventListener("click", closeModal);
+    go.addEventListener("click", async () => {
+      if (!consent.checked) return;
+      go.disabled = true;
+      status.innerHTML = '<span class="spinner"></span> Creating fresh questions…';
+      try {
+        const questions = await generatePracticeQuestions(group, 5);
+        closeModal();
+        openPracticeSession(group, questions, { generatedRound: true });
+      } catch (err) {
+        status.className = "vq-feedback vq-fb-no";
+        status.textContent = "Couldn't generate practice: " + err.message;
+        go.disabled = false;
+      }
+    });
+  }
+
+  async function openPracticeSession(group, questions, opts) {
+    opts = opts || {};
+    const { key: masteryKey, map: mastery } = await loadPracticeMastery();
+    const info = practiceGroupLabel(group);
+    const round = (questions || []).slice();
+    const canGenerate = !!practiceNinjaCat(group);
+    let idx = 0, score = 0, answered = false;
+    openModal(info.label, '<div id="pq"></div>', { large: true });
+    renderQuestion();
+
+    function recordOutcome(q, correct) {
+      if (q.generated) return; // generated reps don't graduate the stored list
+      const k = practiceQKey(group, q);
+      const rec = mastery[k] || { seen: 0, correct: 0 };
+      rec.seen++;
+      if (correct) rec.correct++;
+      mastery[k] = rec;
+      EduStore.setMeta(masteryKey, mastery);
+    }
+    // Parent override: a wrong attempt already bumped seen (correct+0); now count
+    // it as correct so it can still be cleared.
+    function recordOverride(q) {
+      if (q.generated) return;
+      const k = practiceQKey(group, q);
+      const rec = mastery[k] || { seen: 0, correct: 0 };
+      rec.correct++;
+      mastery[k] = rec;
+      EduStore.setMeta(masteryKey, mastery);
+    }
+
+    function renderQuestion() {
+      answered = false;
+      const q = round[idx];
+      const hasExpected = q.expectedAnswer != null && String(q.expectedAnswer).trim() !== "";
+      const last = q.studentAnswer && String(q.studentAnswer).trim()
+        ? '<p class="hint">Last time you wrote: ' + esc(q.studentAnswer) + "</p>" : "";
+      $("pq").innerHTML =
+        '<div class="vq-progress">Question ' + (idx + 1) + " of " + round.length + " · Score " + score + "</div>" +
+        '<div class="pq-question" tabindex="-1">' + esc(q.questionText) + "</div>" + last +
+        '<form id="pq-form" class="pq-form" autocomplete="off">' +
+        '<input id="pq-input" class="pq-input" type="text" placeholder="Type your answer" />' +
+        '<div class="form-actions">' +
+        '<button type="submit" class="btn-primary">Check</button>' +
+        '<button type="button" id="pq-reveal" class="btn-secondary">Show answer</button>' +
+        "</div></form>" +
+        '<div class="vq-feedback" id="pq-feedback"></div>' +
+        '<div id="pq-next-wrap"></div>';
+      const input = $("pq-input");
+      if (input) input.focus();
+      $("pq-form").addEventListener("submit", (e) => {
+        e.preventDefault();
+        if (answered) return;
+        // With no expected answer to check against, "Check" acts as a reveal.
+        if (!hasExpected) return finish(false, true);
+        finish(answersMatch($("pq-input").value, q.expectedAnswer), false);
+      });
+      $("pq-reveal").addEventListener("click", () => { if (!answered) finish(false, true); });
+
+      function finish(correct, revealed) {
+        answered = true;
+        if (correct) score++;
+        recordOutcome(q, correct);
+        if (input) input.disabled = true;
+        const fb = $("pq-feedback");
+        if (correct) {
+          fb.className = "vq-feedback vq-fb-ok";
+          fb.textContent = "Correct! 🌟";
+        } else if (revealed) {
+          fb.className = "vq-feedback";
+          fb.innerHTML = hasExpected
+            ? "The answer is: <strong>" + esc(q.expectedAnswer) + "</strong> — have a look and try to remember it. 🌱"
+            : "Have a look at this one with a grown-up. 🌱";
+        } else {
+          fb.className = "vq-feedback vq-fb-no";
+          fb.innerHTML = "Not quite." + (hasExpected ? " The answer is: <strong>" + esc(q.expectedAnswer) + "</strong>" : "");
+        }
+        // Parent override only when the child typed an answer that was marked wrong.
+        const overrideBtn = (!correct && !revealed && hasExpected)
+          ? '<button type="button" id="pq-override" class="btn-secondary">Mark it right anyway</button>' : "";
+        $("pq-next-wrap").innerHTML = '<div class="form-actions">' + overrideBtn +
+          '<button type="button" id="pq-next" class="btn-primary">' +
+          (idx + 1 < round.length ? "Next" : "See results") + "</button></div>";
+        if (overrideBtn) {
+          $("pq-override").addEventListener("click", () => {
+            recordOverride(q);
+            score++;
+            fb.className = "vq-feedback vq-fb-ok";
+            fb.textContent = "Marked right. 🌟";
+            $("pq-override").disabled = true;
+          });
+        }
+        $("pq-next").addEventListener("click", () => {
+          idx++;
+          if (idx < round.length) renderQuestion(); else renderResults();
+        });
+      }
+    }
+
+    function renderResults() {
+      const pct = Math.round((score / round.length) * 100);
+      const msg = pct >= 80 ? "Amazing work! 🌟"
+        : pct >= 50 ? "Great effort — keep going! 💪"
+        : "Good try — practice makes perfect! 🌱";
+      // For maths groups the Ninja engine can generate fresh, auto-checkable
+      // reps of the same operation — offer more practice without leaving.
+      const moreBtn = canGenerate
+        ? '<button type="button" id="pq-more" class="btn-secondary">Generate more like these ✨</button>' : "";
+      $("pq").innerHTML =
+        '<div class="vq-result"><div class="vq-score">' + score + " / " + round.length + "</div>" +
+        '<div class="vq-pct">' + pct + "%</div><p>" + msg + "</p></div>" +
+        '<div class="form-actions">' + moreBtn +
+        '<button type="button" id="pq-done" class="btn-primary">Done</button></div>';
+      if (moreBtn) {
+        // Start a fresh session over a newly generated batch so the progress
+        // counter and score stay coherent (rather than appending mid-round).
+        $("pq-more").addEventListener("click", () => {
+          const extra = buildGeneratedPracticeRound(group, 5);
+          if (!extra.length) return;
+          openPracticeSession(group, extra, { generatedRound: true });
+        });
+      }
+      $("pq-done").addEventListener("click", () => { closeModal(); renderPractice(); });
+    }
+  }
+  // ========== END PRACTICE ==========
 
   // ============ SETTINGS ============
   // Reflects EduSync status into the Family Sync card. Additive: if EduSync is

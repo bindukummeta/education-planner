@@ -29,6 +29,7 @@ vm.runInContext(
   block +
     "\n;this.__x = { anOutcome, flattenAttempts, topicMasteryOverTime, " +
     "accuracyComplexityTrend, errorPatternEvolution, independenceTrend, approvedVsUnconfirmed, " +
+    "normalizeAnswer, answerToNumber, answersMatch, blindSpotGroups, mathsNinjaCatForGroup, " +
     "expectedComplexityForYear, standardComparison, " +
     "mockTargetProfile, gapToTarget, pacingStatus, " +
     "levelScore, subjectLevel, schoolLevelBreakdown, cxToLevel, accToLevel, levelStatus, groupBySubject, roundHalf };",
@@ -38,6 +39,7 @@ vm.runInContext(
 const {
   anOutcome, flattenAttempts, topicMasteryOverTime,
   accuracyComplexityTrend, errorPatternEvolution, independenceTrend, approvedVsUnconfirmed,
+  normalizeAnswer, answerToNumber, answersMatch, blindSpotGroups, mathsNinjaCatForGroup,
   expectedComplexityForYear, standardComparison,
   mockTargetProfile, gapToTarget, pacingStatus,
   levelScore, subjectLevel, schoolLevelBreakdown, cxToLevel, accToLevel, levelStatus, groupBySubject, roundHalf,
@@ -292,6 +294,63 @@ check("approved vs unconfirmed counts", approvedVsUnconfirmed(rows),
   check("breakdown has 2 subject rows", bd.subjects.length, 2);
   var expected = roundHalf((bd.subjects[0].current + bd.subjects[1].current) / 2);
   check("overall current = mean of subjects", bd.overall.current, expected);
+})();
+
+// ---- Practice: normalizeAnswer / answerToNumber / answersMatch ----
+(function () {
+  check("normalizeAnswer trims/lowercases/collapses/strips", normalizeAnswer("  The  Answer.  "), "the answer");
+  check("normalizeAnswer(null) -> ''", normalizeAnswer(null), "");
+  check("answerToNumber integer", answerToNumber(" 42 "), 42);
+  check("answerToNumber decimal", answerToNumber("0.5"), 0.5);
+  check("answerToNumber fraction", answerToNumber("1/2"), 0.5);
+  check("answerToNumber non-number -> null", answerToNumber("cat"), null);
+  check("answerToNumber divide-by-zero -> null", answerToNumber("1/0"), null);
+  ok("answersMatch exact after normalize", answersMatch("Paris.", "  paris "));
+  ok("answersMatch fraction vs decimal", answersMatch("1/2", "0.5"));
+  ok("answersMatch numeric with spaces", answersMatch(" 42 ", "42"));
+  ok("answersMatch rejects different", !answersMatch("dog", "cat"));
+})();
+
+// ---- Practice: blindSpotGroups ----
+(function () {
+  check("blindSpotGroups([]) -> []", blindSpotGroups([]), []);
+  const bs = [
+    { createdAt: 1000, overall: { subject: "maths" }, attempts: [
+      { questionText: "1/2 + 1/4 = ?", expectedAnswer: "3/4", topic: "fractions", errorType: "calculation", marksAwarded: 0, marksAvailable: 1 },
+      { questionText: "Add fractions", expectedAnswer: null, topic: "fractions", errorType: "concept", marksAwarded: 1, marksAvailable: 2 }] },
+    { createdAt: 2000, overall: { subject: "maths" }, attempts: [
+      { questionText: "1/2 + 1/4 = ?", expectedAnswer: "3/4", topic: "fractions", errorType: "calculation", marksAwarded: 0, marksAvailable: 1 },
+      { questionText: "2 + 2 = ?", expectedAnswer: "4", topic: "general", errorType: "", marksAwarded: 2, marksAvailable: 2 }] },
+  ];
+  const groups = blindSpotGroups(bs);
+  check("only wrong questions bucketed (2 groups)", groups.length, 2);
+  const calc = groups.find((g) => g.errorType === "calculation");
+  check("frequent bucket first", groups[0].errorType, "calculation");
+  check("repeated question deduped", calc.uniqueCount, 1);
+  check("dedup keeps count of all occurrences", calc.count, 2);
+  check("empty errorType -> 'other' key", !!groups.find((g) => g.errorType === "concept"), true);
+  ok("correct question (2+2) excluded", !groups.some((g) => g.questions.some((q) => q.questionText === "2 + 2 = ?")));
+})();
+
+// ---- Practice Phase 2: mathsNinjaCatForGroup ----
+(function () {
+  const g = (subject, topic, texts) => ({
+    subject: subject, topic: topic,
+    questions: (texts || []).map((t) => ({ questionText: t })),
+  });
+  check("non-maths subject -> null", mathsNinjaCatForGroup(g("english", "arithmetic", ["2 + 2"])), null);
+  check("null group -> null", mathsNinjaCatForGroup(null), null);
+  check("fractions topic -> null (not generable)", mathsNinjaCatForGroup(g("maths", "fractions", ["1/2 + 1/4"])), null);
+  check("geometry topic -> null", mathsNinjaCatForGroup(g("maths", "geometry", ["area of triangle"])), null);
+  check("money topic -> null", mathsNinjaCatForGroup(g("maths", "money", ["£3 + £5"])), null);
+  check("addition sniffed -> add", mathsNinjaCatForGroup(g("maths", "arithmetic", ["12 + 5 = ?", "40 + 9 = ?"])), "add");
+  check("subtraction sniffed -> subtract", mathsNinjaCatForGroup(g("maths", "arithmetic", ["12 − 5 = ?"])), "subtract");
+  check("multiply sniffed -> multiply", mathsNinjaCatForGroup(g("maths", "arithmetic", ["12 × 5 = ?"])), "multiply");
+  check("divide sniffed -> divide", mathsNinjaCatForGroup(g("maths", "arithmetic", ["12 ÷ 4 = ?"])), "divide");
+  check("chained ops -> bodmas", mathsNinjaCatForGroup(g("maths", "arithmetic", ["3 + 4 × 2 = ?"])), "bodmas");
+  check("arithmetic worded (no operator) -> add", mathsNinjaCatForGroup(g("maths", "arithmetic", ["What is twelve and five altogether?"])), "add");
+  check("general topic, no operator -> null", mathsNinjaCatForGroup(g("maths", "general", ["Estimate the total"])), null);
+  check("general topic with operator -> op", mathsNinjaCatForGroup(g("maths", "general", ["23 × 4 = ?"])), "multiply");
 })();
 
 console.log("analyzer-progress.test.js: " + passed + " assertions passed");

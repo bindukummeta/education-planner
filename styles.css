@@ -755,6 +755,21 @@ body.no-tabbar .tabbar { display: none; }
 .vq-score { font-family: var(--font-head); font-size: 38px; font-weight: 800; letter-spacing: -0.02em; }
 .vq-pct { font-size: 16px; font-weight: 700; color: var(--muted); }
 
+/* ---- Practice (weak-area re-attempts) ---- */
+.practice-group .practice-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 2px; }
+.practice-group .practice-head h3 { margin: 0; }
+.practice-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.pq-question { font-family: var(--font-head); font-size: 18px; font-weight: 700; margin: 8px 0 10px; line-height: 1.3; }
+.pq-question:focus, .pq-question:focus-visible { outline: none; }
+.pq-form { display: flex; flex-direction: column; gap: 10px; }
+.pq-input {
+  width: 100%; padding: 14px 16px; font-size: 16px; font-weight: 600;
+  color: var(--text); background: var(--card-2); border: 1.5px solid var(--border-strong);
+  border-radius: var(--r-md); box-sizing: border-box;
+}
+.pq-input:focus-visible { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
+.pq-input:disabled { opacity: 0.7; }
+
 /* ---- Spelling Wizard game ---- */
 .sw-progress { font-size: 13px; font-weight: 700; color: var(--muted); }
 .sw-hint { margin: 10px 0 8px; font-weight: 600; }
@@ -857,8 +872,10 @@ body.no-tabbar .tabbar { display: none; }
   right: calc(12px + env(safe-area-inset-right));
 }
 .modal-game .modal-body { flex: 1 1 auto; overflow-y: auto; display: flex; }
-.modal-game #vq, .modal-game #sw { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
+.modal-game #vq, .modal-game #sw, .modal-game #pq { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
 .modal-game #vq .form-actions, .modal-game #sw .form-actions { margin-top: auto; padding-top: 12px; }
+.modal-game #pq .pq-form .form-actions { margin-top: auto; padding-top: 12px; }
+.modal-game .pq-question { font-size: 20px; }
 .modal-game .vq-progress { font-size: 15px; }
 .modal-game .vq-word { font-size: 34px; margin: 10px 0 4px; }
 .modal-game .vq-options { gap: 12px; margin: 12px 0 14px; }
