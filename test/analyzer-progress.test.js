@@ -32,6 +32,7 @@ vm.runInContext(
     "normalizeAnswer, answerToNumber, answersMatch, blindSpotGroups, mathsNinjaCatForGroup, " +
     "expectedComplexityForYear, standardComparison, " +
     "mockTargetProfile, gapToTarget, pacingStatus, " +
+    "sortStudents, resolveActiveStudent, studentInitial, studentColor, " +
     "levelScore, subjectLevel, schoolLevelBreakdown, cxToLevel, accToLevel, levelStatus, groupBySubject, roundHalf };",
   sandbox,
   { filename: "app.js#analyzer-progress" }
@@ -42,6 +43,7 @@ const {
   normalizeAnswer, answerToNumber, answersMatch, blindSpotGroups, mathsNinjaCatForGroup,
   expectedComplexityForYear, standardComparison,
   mockTargetProfile, gapToTarget, pacingStatus,
+  sortStudents, resolveActiveStudent, studentInitial, studentColor,
   levelScore, subjectLevel, schoolLevelBreakdown, cxToLevel, accToLevel, levelStatus, groupBySubject, roundHalf,
 } = sandbox.__x;
 assert.strictEqual(typeof topicMasteryOverTime, "function", "topicMasteryOverTime not extracted");
@@ -351,6 +353,41 @@ check("approved vs unconfirmed counts", approvedVsUnconfirmed(rows),
   check("arithmetic worded (no operator) -> add", mathsNinjaCatForGroup(g("maths", "arithmetic", ["What is twelve and five altogether?"])), "add");
   check("general topic, no operator -> null", mathsNinjaCatForGroup(g("maths", "general", ["Estimate the total"])), null);
   check("general topic with operator -> op", mathsNinjaCatForGroup(g("maths", "general", ["23 × 4 = ?"])), "multiply");
+})();
+
+// ---- Student profile helpers ----
+(function () {
+  const list = [
+    { id: "b", name: "Zara", order: 2 },
+    { id: "a", name: "Amir", order: 1 },
+  ];
+  // sortStudents: order first
+  check("sortStudents orders by order field", sortStudents(list).map((s) => s.id), ["a", "b"]);
+  // tie on order -> name
+  check(
+    "sortStudents tie-breaks on name",
+    sortStudents([{ id: "x", name: "Bo", order: 1 }, { id: "y", name: "Al", order: 1 }]).map((s) => s.id),
+    ["y", "x"]
+  );
+  ok("sortStudents does not mutate input", list[0].id === "b");
+  check("sortStudents([]) -> []", sortStudents([]), []);
+  check("sortStudents(undefined) -> []", sortStudents(undefined), []);
+
+  // resolveActiveStudent
+  check("resolveActiveStudent picks matching id", resolveActiveStudent(list, "b").id, "b");
+  check("resolveActiveStudent missing id -> first sorted", resolveActiveStudent(list, "nope").id, "a");
+  ok("resolveActiveStudent([]) -> null", resolveActiveStudent([], "x") === null);
+
+  // studentInitial
+  check("studentInitial uppercases first char", studentInitial({ name: "leo" }), "L");
+  check("studentInitial trims leading space", studentInitial({ name: "  ada" }), "A");
+  check("studentInitial empty name -> ?", studentInitial({ name: "" }), "?");
+  check("studentInitial no student -> ?", studentInitial(null), "?");
+
+  // studentColor
+  ok("studentColor deterministic for same id", studentColor({ id: "abc" }) === studentColor({ id: "abc" }));
+  ok("studentColor returns a hex from palette", /^#[0-9a-f]{6}$/.test(studentColor({ id: "abc" })));
+  ok("studentColor falls back to name when no id", typeof studentColor({ name: "Zara" }) === "string");
 })();
 
 console.log("analyzer-progress.test.js: " + passed + " assertions passed");

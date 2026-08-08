@@ -224,6 +224,12 @@
     filter = filter || {};
     const store = await tx(STORES.entries, "readonly");
     let rows = await reqP(store.getAll());
+    // Scope to the active child (records made before profiles existed have no
+    // studentId, so treat a missing one as the default student). `*ALL*` opts out.
+    if (filter.studentId !== "*ALL*") {
+      const sid = filter.studentId || (await getActiveStudentId());
+      rows = rows.filter((r) => (r.studentId || DEFAULT_STUDENT_ID) === sid);
+    }
     if (filter.subject) rows = rows.filter((r) => r.subject === filter.subject);
     if (filter.from) rows = rows.filter((r) => r.date >= filter.from);
     if (filter.to) rows = rows.filter((r) => r.date <= filter.to);
@@ -231,7 +237,7 @@
   }
   async function addEntry(entry) {
     const now = Date.now();
-    const record = Object.assign({ id: uid(), createdAt: now, updatedAt: now }, entry);
+    const record = Object.assign({ id: uid(), studentId: DEFAULT_STUDENT_ID, createdAt: now, updatedAt: now }, entry);
     const store = await tx(STORES.entries, "readwrite");
     await reqP(store.put(record));
     await markDirty(STORES.entries, record.id, record.updatedAt);
@@ -253,13 +259,17 @@
     filter = filter || {};
     const store = await tx(STORES.homework, "readonly");
     let rows = await reqP(store.getAll());
+    if (filter.studentId !== "*ALL*") {
+      const sid = filter.studentId || (await getActiveStudentId());
+      rows = rows.filter((r) => (r.studentId || DEFAULT_STUDENT_ID) === sid);
+    }
     if (filter.subject) rows = rows.filter((r) => r.subject === filter.subject);
     if (typeof filter.done === "number") rows = rows.filter((r) => (r.done ? 1 : 0) === filter.done);
     return rows.sort((a, b) => ((a.dueDate || "") < (b.dueDate || "") ? -1 : (a.dueDate || "") > (b.dueDate || "") ? 1 : 0));
   }
   async function addHomework(rec) {
     const now = Date.now();
-    const record = Object.assign({ id: uid(), done: 0, doneAt: null, createdAt: now, updatedAt: now }, rec);
+    const record = Object.assign({ id: uid(), studentId: DEFAULT_STUDENT_ID, done: 0, doneAt: null, createdAt: now, updatedAt: now }, rec);
     const store = await tx(STORES.homework, "readwrite");
     await reqP(store.put(record));
     await markDirty(STORES.homework, record.id, record.updatedAt);
@@ -288,13 +298,17 @@
     filter = filter || {};
     const store = await tx(STORES.reading, "readonly");
     let rows = await reqP(store.getAll());
+    if (filter.studentId !== "*ALL*") {
+      const sid = filter.studentId || (await getActiveStudentId());
+      rows = rows.filter((r) => (r.studentId || DEFAULT_STUDENT_ID) === sid);
+    }
     if (filter.from) rows = rows.filter((r) => r.date >= filter.from);
     if (filter.to) rows = rows.filter((r) => r.date <= filter.to);
     return rows.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
   }
   async function addReading(rec) {
     const now = Date.now();
-    const record = Object.assign({ id: uid(), createdAt: now, updatedAt: now }, rec);
+    const record = Object.assign({ id: uid(), studentId: DEFAULT_STUDENT_ID, createdAt: now, updatedAt: now }, rec);
     const store = await tx(STORES.reading, "readwrite");
     await reqP(store.put(record));
     await markDirty(STORES.reading, record.id, record.updatedAt);
@@ -323,6 +337,10 @@
     filter = filter || {};
     const store = await tx(STORES.mocks, "readonly");
     let rows = await reqP(store.getAll());
+    if (filter.studentId !== "*ALL*") {
+      const sid = filter.studentId || (await getActiveStudentId());
+      rows = rows.filter((r) => (r.studentId || DEFAULT_STUDENT_ID) === sid);
+    }
     if (filter.subject) rows = rows.filter((r) => r.subject === filter.subject);
     if (filter.from) rows = rows.filter((r) => r.date >= filter.from);
     if (filter.to) rows = rows.filter((r) => r.date <= filter.to);
@@ -330,7 +348,7 @@
   }
   async function addMocks(rec) {
     const now = Date.now();
-    const record = Object.assign({ id: uid(), createdAt: now, updatedAt: now }, rec);
+    const record = Object.assign({ id: uid(), studentId: DEFAULT_STUDENT_ID, createdAt: now, updatedAt: now }, rec);
     const store = await tx(STORES.mocks, "readwrite");
     await reqP(store.put(record));
     await markDirty(STORES.mocks, record.id, record.updatedAt);
@@ -412,6 +430,32 @@
     await reqP(store.put(record));
     await markDirty(STORES.students, record.id, record.updatedAt);
     return record;
+  }
+  async function updateStudent(id, patch) {
+    const store = await tx(STORES.students, "readonly");
+    const cur = await reqP(store.get(id));
+    if (!cur) return null;
+    const record = Object.assign({}, cur, patch, { updatedAt: Date.now() });
+    const rw = await tx(STORES.students, "readwrite");
+    await reqP(rw.put(record));
+    await markDirty(STORES.students, record.id, record.updatedAt);
+    return record;
+  }
+  async function deleteStudent(id) {
+    // Never allow removing the last child — the app always needs one active student.
+    const all = await getStudents();
+    if (all.length <= 1) throw new Error("Can't remove the last child");
+    const now = Date.now();
+    const store = await tx(STORES.students, "readwrite");
+    await reqP(store.delete(id));
+    await writeTombstone(STORES.students, id, now);
+    await markDirty(STORES.students, id, now);
+    // If the removed child was active, fall back to the first remaining child.
+    const active = await getActiveStudentId();
+    if (active === id) {
+      const next = all.find((s) => s.id !== id);
+      if (next) await setActiveStudentId(next.id);
+    }
   }
 
   // ---- projects (Play & Create) ----
@@ -612,10 +656,10 @@
 
   async function exportAll() {
     const schools = await getSchools();
-    const entries = await getEntries();
-    const homework = await getHomework();
-    const reading = await getReading();
-    const mocks = await getMocks();
+    const entries = await getEntries({ studentId: "*ALL*" });
+    const homework = await getHomework({ studentId: "*ALL*" });
+    const reading = await getReading({ studentId: "*ALL*" });
+    const mocks = await getMocks({ studentId: "*ALL*" });
     const events = await getEvents();
     const students = await getStudents();
     const projects = await getProjects({ studentId: "*ALL*" });
@@ -718,7 +762,7 @@
     getReading, addReading, updateReading, deleteReading,
     getMocks, addMocks, updateMocks, deleteMocks,
     getEvents, addEvent, updateEvent, deleteEvent,
-    getStudents, getActiveStudentId, setActiveStudentId, addStudent,
+    getStudents, getActiveStudentId, setActiveStudentId, addStudent, updateStudent, deleteStudent,
     getProjects, addProject, updateProject, deleteProject,
     getCuriosity, addCuriosity, updateCuriosity, deleteCuriosity,
     getAnalyses, addAnalysis, updateAnalysis, deleteAnalysis,

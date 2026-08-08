@@ -5,6 +5,31 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Profiles — per-child picker inside the family login
+
+- **"Who's practising?" profile picker.** A new profile pill in the top-right of
+  the header shows the active child (coloured initial + name). Tapping it opens a
+  picker to **switch child**, **+ Add child**, **rename** (✏️), or **remove** (✕).
+  Switching instantly re-scopes the whole app — dashboard, Analyzer worksheets,
+  Practice, Play & Create, Curiosity, Daily Log, Homework, Reading, Mocks, and
+  per-child game/practice mastery — to the selected child.
+- **All practice data is now per-child.** Daily Log, Homework, Reading, and Mocks
+  join the already-scoped stores; records made before profiles existed are treated
+  as belonging to the first child, so nothing is lost. Backups export every
+  child's data.
+- **The child list syncs; the active selection stays on the device.** Adding /
+  renaming / removing a child propagates across devices via the existing Family
+  Sync, while which child is "active" is remembered per device — so two devices
+  can have different children open at once.
+- **Safe by design.** You can't remove the last child; removing the active child
+  falls back to the first remaining one. A removed child's worksheets are kept
+  (hidden) rather than hard-deleted.
+- **Under the hood.** New `updateStudent` / `deleteStudent` in storage; the four
+  previously-global stores now filter by active student (with an `*ALL*` opt-out
+  used by export); new pure helpers `resolveActiveStudent` / `sortStudents` /
+  `studentInitial` / `studentColor` (unit-tested). Service worker cache bumped
+  v55 → v56.
+
 ### Practice — generate similar questions with AI (opt-in, all subjects)
 
 - **"Generate similar (AI) ✨" for any subject.** Blind-spot buckets the offline

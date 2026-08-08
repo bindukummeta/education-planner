@@ -99,8 +99,10 @@
     calendar: () => renderCalendar(),
     settings: () => renderSettings(),
   };
+  let currentView = "dashboard";
   function showView(name) {
     if (VIEW_KEYS.indexOf(name) < 0) name = "dashboard";
+    currentView = name;
     VIEW_KEYS.forEach((v) => {
       const el = $("view-" + v);
       if (el) el.classList.toggle("hidden", v !== name);
@@ -709,7 +711,9 @@
     if (g) {
       const h = new Date().getHours();
       const part = h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
-      g.textContent = part + "! Ready to learn today? 🌟";
+      const who = resolveActiveStudent(await EduStore.getStudents(), await EduStore.getActiveStudentId());
+      const nm = who && who.name ? ", " + who.name : "";
+      g.textContent = part + nm + "! Ready to learn today? 🌟";
     }
     // Next-exam countdown from the soonest future school exam date.
     const schools = await EduStore.getSchools();
@@ -1907,6 +1911,86 @@
     m.classList.remove("modal-game");
     m.setAttribute("aria-hidden", "true");
   }
+
+  // ---- child profiles (picker + header pill) ----
+  // Paint the header pill with the active child's initial, colour and name.
+  async function renderProfileAffordance() {
+    const students = await EduStore.getStudents();
+    const activeId = await EduStore.getActiveStudentId();
+    const s = resolveActiveStudent(students, activeId);
+    const av = $("profile-avatar"), nm = $("profile-name");
+    if (av) { av.textContent = studentInitial(s); av.style.background = studentColor(s || {}); }
+    if (nm) nm.textContent = s ? s.name : "";
+  }
+  // Re-scope the whole UI to the newly-selected child.
+  async function onStudentChanged() {
+    await renderProfileAffordance();
+    if (VIEW_RENDER[currentView]) VIEW_RENDER[currentView]();
+  }
+  // The "Who's practising?" modal: switch, add, rename, delete.
+  async function openProfilePicker() {
+    const students = sortStudents(await EduStore.getStudents());
+    const activeId = await EduStore.getActiveStudentId();
+    let rows = students.map((s) => {
+      const active = s.id === activeId ? " profile-row-active" : "";
+      return (
+        '<div class="profile-row' + active + '" data-id="' + esc(s.id) + '">' +
+          '<span class="profile-avatar" style="background:' + studentColor(s) + '">' + esc(studentInitial(s)) + '</span>' +
+          '<button type="button" class="profile-row-pick" data-act="pick" data-id="' + esc(s.id) + '">' + esc(s.name) + '</button>' +
+          '<button type="button" class="profile-row-btn" data-act="rename" data-id="' + esc(s.id) + '" aria-label="Rename">✏️</button>' +
+          '<button type="button" class="profile-row-btn" data-act="delete" data-id="' + esc(s.id) + '" aria-label="Remove">✕</button>' +
+        '</div>'
+      );
+    }).join("");
+    const body =
+      '<div id="profile-picker">' +
+        '<div class="profile-list">' + rows + '</div>' +
+        '<div class="profile-add">' +
+          '<input type="text" id="profile-new-name" placeholder="New child\u2019s name" maxlength="40" />' +
+          '<button type="button" class="btn-primary" data-act="add">+ Add child</button>' +
+        '</div>' +
+        '<p class="profile-msg" id="profile-msg" hidden></p>' +
+      '</div>';
+    openModal("Who\u2019s practising?", body);
+    const msg = (t) => { const el = $("profile-msg"); if (el) { el.textContent = t; el.hidden = !t; } };
+    $("profile-picker").addEventListener("click", async (e) => {
+      const btn = e.target.closest("button[data-act]");
+      if (!btn) return;
+      const act = btn.getAttribute("data-act");
+      const id = btn.getAttribute("data-id");
+      if (act === "pick") {
+        await EduStore.setActiveStudentId(id);
+        closeModal();
+        await onStudentChanged();
+      } else if (act === "add") {
+        const name = ($("profile-new-name").value || "").trim();
+        if (!name) { msg("Type a name first."); return; }
+        const rec = await EduStore.addStudent({ name: name });
+        await EduStore.setActiveStudentId(rec.id);
+        closeModal();
+        await onStudentChanged();
+        openProfilePicker();
+      } else if (act === "rename") {
+        const cur = students.find((s) => s.id === id);
+        const next = window.prompt("Rename child", cur ? cur.name : "");
+        if (next == null) return;
+        const trimmed = next.trim();
+        if (!trimmed) { msg("Name can\u2019t be empty."); return; }
+        await EduStore.updateStudent(id, { name: trimmed });
+        await renderProfileAffordance();
+        openProfilePicker();
+      } else if (act === "delete") {
+        const cur = students.find((s) => s.id === id);
+        if (!window.confirm("Remove " + (cur ? cur.name : "this child") + "? Their worksheets stay saved but hidden.")) return;
+        try {
+          await EduStore.deleteStudent(id);
+          await onStudentChanged();
+          openProfilePicker();
+        } catch (err) { msg(err && err.message ? err.message : "Couldn\u2019t remove."); }
+      }
+    });
+  }
+
   // ---- Vocabulary Quest game ----
   const VOCAB_QUIZ_LEN = 8;  // questions per round
   const VOCAB_MASTER_AT = 2; // correct answers before a word counts as "mastered"
@@ -3048,12 +3132,14 @@
     a.confidence = (typeof ai.confidence === "number") ? ai.confidence : null;
     a.needsReview = (ai.correctness === "unclear") ? true : (ai.needsReview !== false);
     a.reasoningSummary = softenSummary(ai.reasoningSummary || "");
-    // Auto-approve confident, clearly-judged questions so the parent only has to
-    // review the low-confidence / unclear ones. A question counts as confident when
-    // the AI gave a definite right/wrong verdict, didn't flag it for review, and
-    // scored its confidence at 0.6+. Everything else stays unapproved (flagged).
-    const clearVerdict = ai.correctness === "correct" || ai.correctness === "incorrect";
-    const confident = clearVerdict && a.needsReview === false && (a.confidence == null || a.confidence >= 0.6);
+    // Auto-approve only very-confident "correct" verdicts so the parent skips the
+    // easy wins but still eyeballs everything riskier. We deliberately do NOT
+    // auto-approve "incorrect" here: an "incorrect" mark depends on the AI both
+    // reading the child's handwriting AND computing the expected answer right, and
+    // a confidently-wrong "incorrect" is the most damaging error (it wrongly
+    // penalises the child). Those — plus partial/unclear — always stay flagged for
+    // the parent to confirm. Threshold raised to 0.85 to keep the bar high.
+    const confident = ai.correctness === "correct" && a.needsReview === false && (a.confidence == null || a.confidence >= 0.85);
     a.parentApproved = confident;
     if (confident) a.needsReview = false;
     return a;
@@ -3892,6 +3978,36 @@
     var oCur = roundHalf(mean(cur)), oTgt = roundHalf(mean(tgt));
     return { overall: { current: oCur, target: oTgt, status: levelStatus(oCur, oTgt), enoughData: cur.length > 0 }, subjects: rows };
   }
+
+  // ---- student profiles (pure display helpers) ----
+  // Order children by their `order` field, then name — mirrors getStudents().
+  function sortStudents(list) {
+    return (list || []).slice().sort(function (a, b) {
+      var d = (a.order || 0) - (b.order || 0);
+      if (d) return d;
+      return String(a.name || "").localeCompare(String(b.name || ""));
+    });
+  }
+  // The active child, or the first child as a fallback, or null when none exist.
+  function resolveActiveStudent(students, activeId) {
+    var sorted = sortStudents(students);
+    if (!sorted.length) return null;
+    var hit = sorted.find(function (s) { return s.id === activeId; });
+    return hit || sorted[0];
+  }
+  // First visible character of the name, uppercased; "?" when there's nothing.
+  function studentInitial(s) {
+    var name = (s && s.name ? String(s.name) : "").trim();
+    return name ? name.charAt(0).toUpperCase() : "?";
+  }
+  // Deterministic avatar colour from a fixed palette, keyed on id (or name).
+  function studentColor(s) {
+    var palette = ["#f97316", "#0ea5e9", "#22c55e", "#a855f7", "#ec4899", "#eab308", "#14b8a6", "#ef4444"];
+    var key = String((s && (s.id || s.name)) || "");
+    var sum = 0;
+    for (var i = 0; i < key.length; i++) sum += key.charCodeAt(i);
+    return palette[sum % palette.length];
+  }
   // __ANALYTICS_END__
 
   // Working draft during a capture→review session (before it is saved).
@@ -4141,8 +4257,8 @@
       const aiNote = a.reasoningSummary ? '<p class="an-ai-note">' + esc(a.reasoningSummary) + "</p>" : "";
       const answers = enhanced
         ? '<div class="an-answers">' +
-          '<label class="an-answer">Their answer<input class="an-q-sa" type="text" value="' + esc(a.studentAnswer || "") + '" /></label>' +
-          '<label class="an-answer">Expected<input class="an-q-ea" type="text" value="' + esc(a.expectedAnswer || "") + '" /></label>' +
+          '<label class="an-answer">Their answer <small class="an-answer-hint">(what your child wrote)</small><input class="an-q-sa" type="text" value="' + esc(a.studentAnswer || "") + '" /></label>' +
+          '<label class="an-answer">Expected <small class="an-answer-hint">(the correct answer)</small><input class="an-q-ea" type="text" value="' + esc(a.expectedAnswer || "") + '" /></label>' +
           "</div>"
         : "";
       return '<div class="an-row' + (needsFlag ? " an-needs-review" : "") + '" data-idx="' + i + '">' +
@@ -4843,6 +4959,7 @@
         if (b.dataset.gotoThen) { const t = $(b.dataset.gotoThen); if (t) t.click(); }
       }));
     $("menu-btn").addEventListener("click", toggleDrawer);
+    $("profile-btn").addEventListener("click", openProfilePicker);
     $("drawer-backdrop").addEventListener("click", closeDrawer);
     $("modal-close").addEventListener("click", closeModal);
     $("modal-backdrop").addEventListener("click", closeModal);
@@ -4928,6 +5045,7 @@
     $("r-date").value = todayISO();
     $("m-date").value = todayISO();
     renderSchools();
+    await renderProfileAffordance();
     showView("dashboard");
   }
 

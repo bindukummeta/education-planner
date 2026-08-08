@@ -13,6 +13,10 @@ const UPSTREAM_TIMEOUT_MS = 290000;
 // (stop_reason: max_tokens) and failed to parse. Sonnet-class models support
 // far more, so give the structured output ample room. Overridable per-env.
 const MAX_OUTPUT_TOKENS = Number(process.env.ANTHROPIC_MAX_OUTPUT_TOKENS) || 32000;
+// Reasoning depth for adaptive thinking (output_config.effort): "low" | "medium"
+// | "high". Higher = more accurate answers but slower; "medium" is a safe default
+// against the upstream timeout. Overridable per-env.
+const ANTHROPIC_EFFORT = process.env.ANTHROPIC_EFFORT || "medium";
 const ERROR_TYPES = ["concept", "calculation", "instruction", "incomplete", "time", "skipped", "other"];
 const CORRECTNESS = ["correct", "incorrect", "partial", "unclear"];
 
@@ -27,9 +31,14 @@ talking to the child. Everything you produce is a SUGGESTION for the parent to c
 WHAT TO EXTRACT
 For each question you can see on the worksheet, extract:
 - questionText: the printed question text, copied verbatim as printed.
-- studentAnswer: the child's visible handwritten answer if you can read it clearly; otherwise null.
-- expectedAnswer: work out the correct answer to the question yourself and give it here (a short
-  value, e.g. "42" or "3/4"). Only use null if the question genuinely has no single correct answer.
+- studentAnswer: ONLY what the CHILD wrote by hand (their pencil/pen handwriting). If the value is
+  printed as part of the worksheet, it is NOT the child's answer — use null. If you cannot clearly
+  read the child's handwriting, use null. NEVER put your own worked-out answer here.
+- working: briefly work out the correct answer to the question here, step by step, BEFORE you fill in
+  expectedAnswer. Keep it short — this is your scratch space for getting the maths right.
+- expectedAnswer: the correct answer that YOU worked out in "working" above (a short value, e.g. "42"
+  or "3/4"). This is what the answer SHOULD be. NEVER copy the child's studentAnswer into this field.
+  Only use null if the question genuinely has no single correct answer.
 - correctness: compare the child's studentAnswer to the expectedAnswer you worked out and judge it as
   exactly one of "correct", "incorrect", "partial", or "unclear". Use "unclear" only when you cannot
   read the child's answer at all.
@@ -54,10 +63,20 @@ LANGUAGE RULES (STRICT)
 - NEVER use fixed-ability or identity labels such as: gifted, genius, talented, "not a maths person".
 - Do not compare the child to other children. Describe the work, not the child.
 
+DO NOT SWAP THE ANSWERS (STRICT)
+- studentAnswer = what the CHILD actually wrote (their handwriting). expectedAnswer = the CORRECT
+  answer YOU worked out. These are two different fields and must NEVER be swapped.
+- Before finishing each question, silently check this sentence against the photo: "The child wrote
+  <studentAnswer>; the correct answer is <expectedAnswer>." If it does not match, fix the fields.
+- If studentAnswer and expectedAnswer end up identical but you are not fully sure you read the child's
+  handwriting correctly, set needsReview to true.
+
 HONESTY RULES
 - If the handwriting or answer is unreadable, set studentAnswer to null, correctness to "unclear",
-  and needsReview to true. NEVER invent or guess a mark.
-- Prefer null over a guess. These are SUGGESTIONS the parent will confirm.
+  and needsReview to true. NEVER invent or guess what the child wrote.
+- Always fill in "working" and expectedAnswer if the question has a single correct answer — that is
+  YOUR job, not a guess about the child. Prefer null for studentAnswer over guessing the handwriting.
+- These are SUGGESTIONS the parent will confirm.
 
 OUTPUT
 - Respond with ONLY valid, minified JSON that conforms exactly to the schema you have been given.
@@ -86,6 +105,10 @@ const RESPONSE_SCHEMA = {
         properties: {
           questionText: { type: "string" },
           studentAnswer: { type: ["string", "null"] },
+          // `working` comes before expectedAnswer so the model reasons out the
+          // correct answer first, then commits it — Structured Outputs generates
+          // properties in schema order, giving us in-band chain-of-thought.
+          working: { type: ["string", "null"] },
           expectedAnswer: { type: ["string", "null"] },
           correctness: { type: "string", enum: CORRECTNESS },
           marksAwarded: { type: ["number", "null"] },
@@ -98,7 +121,7 @@ const RESPONSE_SCHEMA = {
           needsReview: { type: "boolean" }
         },
         required: [
-          "questionText", "studentAnswer", "correctness",
+          "questionText", "studentAnswer", "working", "correctness",
           "reasoningSummary", "confidence", "needsReview"
         ]
       }
@@ -128,6 +151,7 @@ function normalizeAttempt(a) {
   return {
     questionText: strOrNull(a.questionText) || "",
     studentAnswer: strOrNull(a.studentAnswer),
+    working: strOrNull(a.working),
     expectedAnswer: strOrNull(a.expectedAnswer),
     correctness,
     marksAwarded: numOrNull(a.marksAwarded),
@@ -198,15 +222,20 @@ module.exports = async (req, res) => {
         body: JSON.stringify({
           model,
           max_tokens: MAX_OUTPUT_TOKENS,
-          // Claude Sonnet 5 runs adaptive thinking by default, which shares the
-          // max_tokens budget with the answer — a tight budget gets spent on thinking
-          // and truncates the JSON (stop_reason: max_tokens). This is a structured
-          // extraction task, not deep reasoning, so disable thinking to reserve the
-          // whole budget for the output.
-          thinking: { type: "disabled" },
+          // Working out each answer and grading it is genuine reasoning, so leave
+          // adaptive thinking ON — without it the model does arithmetic/marking with
+          // no scratchpad and produces wrong expectedAnswers. Structured Outputs is
+          // compatible with thinking: the model thinks first, then the final text
+          // block still conforms to the schema. Depth is controlled by output_config
+          // .effort (not a token budget on adaptive models); "medium" balances
+          // accuracy against the UPSTREAM_TIMEOUT_MS ceiling. Overridable per-env.
+          thinking: { type: "adaptive" },
           // Structured Outputs (GA output_config.format, no beta header) — constrains
           // decoding so the response is guaranteed schema-valid JSON.
-          output_config: { format: { type: "json_schema", schema: RESPONSE_SCHEMA } },
+          output_config: {
+            effort: ANTHROPIC_EFFORT,
+            format: { type: "json_schema", schema: RESPONSE_SCHEMA }
+          },
           system: SYSTEM_PROMPT,
           messages: [{
             role: "user",
