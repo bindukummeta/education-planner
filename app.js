@@ -4023,6 +4023,28 @@
     await renderAnalyzerList();
   }
 
+  // A few common tuition/worksheet providers to seed the "Where's this from?"
+  // autocomplete on the very first scan, before the parent's own history exists.
+  const AN_ORIGIN_SEEDS = ["AE", "Kumon", "Examberry", "School", "Bond", "CGP"];
+
+  // Build the <option> list for the origin datalist: every distinct provider the
+  // parent has used before (across all children, newest first) topped up with the
+  // seeds, de-duplicated case-insensitively.
+  async function buildOriginDatalist() {
+    const rows = await EduStore.getAnalyses({ studentId: "*ALL*" });
+    const seen = new Set();
+    const vals = [];
+    const add = (o) => {
+      const v = (o || "").trim();
+      if (!v || seen.has(v.toLowerCase())) return;
+      seen.add(v.toLowerCase());
+      vals.push(v);
+    };
+    rows.forEach((r) => add(r.origin));
+    AN_ORIGIN_SEEDS.forEach(add);
+    return vals.map((o) => '<option value="' + esc(o) + '">').join("");
+  }
+
   // Capture: pick/scan a printed worksheet photo, confirm subject, run OCR (local)
   // or opt-in cloud Vision analysis (enhanced, only when the master switch is ON).
   async function openAnalyzerCapture(opts) {
@@ -4035,6 +4057,10 @@
     const masterOn = (await EduStore.getMeta("analyzer.enhancedAi.enabled")) === true;
     const subjOpts = SUBJECTS.map((s) =>
       '<option value="' + s + '"' + (s === "maths" ? " selected" : "") + ">" + esc(SUBJECT_LABEL[s]) + "</option>").join("");
+    // "Where's this from?" autocomplete: remember every provider the parent has
+    // used before (across all children), then top up with a few common seeds so
+    // the very first scan still has suggestions. Free text is allowed.
+    const originOpts = await buildOriginDatalist();
     const enhancedBlock = masterOn
       ? '<label class="an-mode-pick"><input type="checkbox" id="an-enhanced"> ✨ Enhanced AI (beta)</label>' +
         '<label class="an-consent hidden" id="an-consent-row"><input type="checkbox" id="an-consent"> I understand this photo will be sent securely for analysis.</label>'
@@ -4043,6 +4069,8 @@
       '<form id="an-form" class="an-form">' +
       '<p class="hint">🔒 Private Scan reads the <b>printed questions</b> on the page. Your child\'s handwritten answers stay for you to mark with ✓ / part-marks / ✗ — the photo never leaves this device.</p>' +
       '<label>Subject<select id="an-subject">' + subjOpts + "</select></label>" +
+      '<label>Where\'s this from?<input type="text" id="an-origin" list="an-origin-list" placeholder="e.g. AE, Kumon, Examberry, School" autocomplete="off"></label>' +
+      '<datalist id="an-origin-list">' + originOpts + "</datalist>" +
       '<label>Worksheet photo(s)<input type="file" id="an-image" accept="image/*" multiple required>' +
       '<span class="hint an-file-hint">Take a photo or choose one or more from your library — add every page of the same worksheet.</span></label>' +
       enhancedBlock +
@@ -4071,6 +4099,7 @@
       const files = Array.from($("an-image").files || []);
       if (!files.length) return;
       const subject = $("an-subject").value;
+      const origin = (($("an-origin") && $("an-origin").value) || "").trim();
       const useEnhanced = masterOn && $("an-enhanced") && $("an-enhanced").checked === true;
       const consent = !!(useEnhanced && $("an-consent") && $("an-consent").checked === true);
       const multi = files.length > 1;
@@ -4113,7 +4142,7 @@
         bar.style.width = "0%";
         txt.textContent = (err && err.message) || "The analysis didn't come back. Your photos are safe — you can review by hand.";
         const emptyDraft = {
-          source: captureSource, schoolId: captureSchoolId, mode: useEnhanced ? "enhanced" : "local",
+          source: captureSource, schoolId: captureSchoolId, origin: origin, mode: useEnhanced ? "enhanced" : "local",
           overall: { subject: subject, score: null, avgComplexity: null }, attempts: [],
         };
         if (!$("an-review-anyway")) {
@@ -4130,12 +4159,13 @@
         }
         return;
       }
-      anDraft = Object.assign({ blobId: blobId, blobIds: blobIds }, analysis, { source: captureSource, schoolId: captureSchoolId });
+      anDraft = Object.assign({ blobId: blobId, blobIds: blobIds }, analysis, { source: captureSource, schoolId: captureSchoolId, origin: origin });
       openAnalyzerReview();
     });
     $("an-manual").addEventListener("click", () => {
       const subject = $("an-subject").value;
-      anDraft = { blobId: null, blobIds: [], source: captureSource, schoolId: captureSchoolId, mode: "local", overall: { subject: subject, score: null, avgComplexity: null }, attempts: [] };
+      const origin = (($("an-origin") && $("an-origin").value) || "").trim();
+      anDraft = { blobId: null, blobIds: [], source: captureSource, schoolId: captureSchoolId, origin: origin, mode: "local", overall: { subject: subject, score: null, avgComplexity: null }, attempts: [] };
       openAnalyzerReview();
     });
   }
@@ -4344,6 +4374,13 @@
     const record = {
       source: anDraft.source || "worksheet",
       schoolId: anDraft.schoolId || null,
+      // "Where's this from?" provider label used to group the list (e.g. AE,
+      // Kumon, Examberry). Empty means it lands in the "Unsorted" folder.
+      origin: (anDraft.origin || "").trim(),
+      // Worksheet-level progress: the parent flips this with an explicit "Mark
+      // done" button on the card. Starts not-done.
+      done: false,
+      doneAt: null,
       mode: anDraft.mode || "local",
       provider: enhanced ? "anthropic" : null,
       aiConfidence: (anDraft.overall && anDraft.overall.aiConfidence) != null ? anDraft.overall.aiConfidence : null,
@@ -4383,34 +4420,105 @@
       return;
     }
     list.innerHTML = "";
+    // Two-level folders: Subject → Provider ("Where's this from?"). Cards keep the
+    // newest-first order getAnalyses already applied. Thumbnails are filled in a
+    // second async pass so the whole tree renders synchronously first.
+    const thumbJobs = [];
+    const bySubject = new Map();
     for (const r of rows) {
-      const row = document.createElement("div");
-      row.className = "an-card";
-      let thumb = '<div class="thumb"></div>';
-      if (r.blobId) {
-        const b = await EduStore.getBlob(r.blobId);
-        if (b && b.blob) thumb = '<img class="thumb" src="' + trackURL(URL.createObjectURL(b.blob)) + '" alt="worksheet" />';
-      }
-      const subj = SUBJECT_LABEL[r.overall && r.overall.subject] || (r.overall && r.overall.subject) || "";
-      const scoreChip = (r.overall && r.overall.score != null) ? '<span class="score-badge">' + r.overall.score + "%</span>" : "";
-      const cxChip = (r.overall && r.overall.avgComplexity != null) ? '<span class="chip">~ complexity ' + r.overall.avgComplexity + "</span>" : "";
-      const approved = (r.attempts || []).filter((a) => a.parentApproved).length;
-      const okChip = approved ? '<span class="chip an-ok">✓ ' + approved + " approved</span>" : "";
-      const date = new Date(r.createdAt || Date.now()).toISOString().slice(0, 10);
-      row.innerHTML = thumb +
-        '<div class="entry-body"><div class="entry-top">' +
-        '<span class="entry-subj">' + esc(subj) + "</span>" +
-        '<span class="entry-date">' + esc(date) + "</span>" + scoreChip + "</div>" +
-        '<div class="an-chips">' + cxChip + okChip + '<span class="chip">' + (r.attempts || []).length + " questions</span></div>" +
-        "</div>" +
-        '<button class="entry-del" aria-label="Delete">🗑</button>';
-      row.querySelector(".entry-del").addEventListener("click", async () => {
-        if (!confirm("Delete this worksheet?")) return;
-        await EduStore.deleteAnalysis(r.id);
-        renderAnalyzer();
-      });
-      list.appendChild(row);
+      const subj = (r.overall && r.overall.subject) || "other";
+      if (!bySubject.has(subj)) bySubject.set(subj, []);
+      bySubject.get(subj).push(r);
     }
+    // Known subjects first (in SUBJECTS order), then any unexpected ones.
+    const subjOrder = SUBJECTS.filter((s) => bySubject.has(s))
+      .concat(Array.from(bySubject.keys()).filter((s) => SUBJECTS.indexOf(s) === -1));
+    for (const subj of subjOrder) {
+      const subjRows = bySubject.get(subj);
+      const subjLabel = SUBJECT_LABEL[subj] || subj;
+      const subjDone = subjRows.filter((r) => r.done).length;
+      const det = document.createElement("details");
+      det.className = "an-folder";
+      det.open = true;
+      det.innerHTML = '<summary class="an-folder-head">' +
+        '<span class="an-folder-name">' + esc(subjLabel) + "</span>" +
+        '<span class="an-folder-meta">' + subjRows.length + " worksheet" + (subjRows.length === 1 ? "" : "s") +
+        " · " + subjDone + " done</span></summary>";
+      // Sub-group by provider; blank origin collapses into "Unsorted" (last).
+      const byOrigin = new Map();
+      for (const r of subjRows) {
+        const o = (r.origin || "").trim() || "Unsorted";
+        if (!byOrigin.has(o)) byOrigin.set(o, []);
+        byOrigin.get(o).push(r);
+      }
+      const origins = Array.from(byOrigin.keys()).sort((a, b) =>
+        a === "Unsorted" ? 1 : b === "Unsorted" ? -1 : a.localeCompare(b));
+      for (const o of origins) {
+        const oRows = byOrigin.get(o);
+        const oDone = oRows.filter((r) => r.done).length;
+        const grp = document.createElement("div");
+        grp.className = "an-origin-group";
+        grp.innerHTML = '<div class="an-origin-head">' +
+          '<span class="an-origin-name">📁 ' + esc(o) + "</span>" +
+          '<span class="an-origin-meta">' + oDone + "/" + oRows.length + " done</span></div>";
+        for (const r of oRows) grp.appendChild(buildAnalysisCard(r, thumbJobs));
+        det.appendChild(grp);
+      }
+      list.appendChild(det);
+    }
+    for (const job of thumbJobs) await job();
+  }
+
+  // Build one worksheet card (synchronous). Any thumbnail fetch is queued into
+  // `thumbJobs` for the caller to await, so the folder tree can render at once.
+  function buildAnalysisCard(r, thumbJobs) {
+    const row = document.createElement("div");
+    row.className = "an-card" + (r.done ? " an-done" : "");
+    const subj = SUBJECT_LABEL[r.overall && r.overall.subject] || (r.overall && r.overall.subject) || "";
+    const scoreChip = (r.overall && r.overall.score != null) ? '<span class="score-badge">' + r.overall.score + "%</span>" : "";
+    const cxChip = (r.overall && r.overall.avgComplexity != null) ? '<span class="chip">~ complexity ' + r.overall.avgComplexity + "</span>" : "";
+    const approved = (r.attempts || []).filter((a) => a.parentApproved).length;
+    const okChip = approved ? '<span class="chip an-ok">✓ ' + approved + " approved</span>" : "";
+    const statusChip = r.done
+      ? '<span class="chip an-done-chip">✓ Done</span>'
+      : '<span class="chip an-pending-chip">In progress</span>';
+    const date = new Date(r.createdAt || Date.now()).toISOString().slice(0, 10);
+    row.innerHTML =
+      '<div class="thumb"></div>' +
+      '<div class="entry-body"><div class="entry-top">' +
+      '<span class="entry-subj">' + esc(subj) + "</span>" +
+      '<span class="entry-date">' + esc(date) + "</span>" + scoreChip + "</div>" +
+      '<div class="an-chips">' + statusChip + cxChip + okChip +
+      '<span class="chip">' + (r.attempts || []).length + " questions</span></div>" +
+      "</div>" +
+      '<div class="an-card-actions">' +
+      '<button type="button" class="an-done-btn' + (r.done ? " is-done" : "") + '">' + (r.done ? "Undo done" : "Mark done") + "</button>" +
+      '<button type="button" class="entry-del" aria-label="Delete">🗑</button>' +
+      "</div>";
+    if (thumbJobs && r.blobId) {
+      thumbJobs.push(async () => {
+        const b = await EduStore.getBlob(r.blobId);
+        if (b && b.blob) {
+          const img = document.createElement("img");
+          img.className = "thumb";
+          img.alt = "worksheet";
+          img.src = trackURL(URL.createObjectURL(b.blob));
+          const ph = row.querySelector(".thumb");
+          if (ph) ph.replaceWith(img);
+        }
+      });
+    }
+    row.querySelector(".entry-del").addEventListener("click", async () => {
+      if (!confirm("Delete this worksheet?")) return;
+      await EduStore.deleteAnalysis(r.id);
+      renderAnalyzer();
+    });
+    row.querySelector(".an-done-btn").addEventListener("click", async () => {
+      const next = !r.done;
+      await EduStore.updateAnalysis(r.id, { done: next, doneAt: next ? Date.now() : null });
+      renderAnalyzer();
+    });
+    return row;
   }
 
   // ---- local insights (offline, evidence-only; a summary of recorded results) ----
