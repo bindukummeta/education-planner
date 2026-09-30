@@ -1,0 +1,12 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Synthetic credentials used only by tests and the load harness"
+regexTarget = "match"
+regexes = [
+  '''anon-key-0123456789abcdef''',
+  '''service-role-0123456789abcdef''',
+  '''pepper-0123456789abcdef''',
+  '''test-anthropic-key-0123456789''',
+]
