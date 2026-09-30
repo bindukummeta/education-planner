@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "windowDays": 28,
+  "status": "definition-only",
+  "externalActivationGate": "These queries are for an operator console. This repository does not query Vercel, Supabase, or Anthropic, and it has not launched a beta.",
+  "successOutcomes": ["ok"],
+  "budgetOutcomes": ["ok", "timeout", "upstream_error", "internal", "quota_unavailable", "not_configured"],
+  "excludedOutcomes": ["unauthorized", "invalid_request", "payload_too_large", "rate_limited", "concurrency_limited", "method_not_allowed", "not_admitted", "disabled", "release_failed"],
+  "objectives": [
+    {
+      "id": "static_shell",
+      "surface": "static shell",
+      "group": "static shell",
+      "successTarget": 0.995,
+      "p95TargetMs": 800,
+      "successDefinition": "GET / returns HTTP 200 and the body contains Education Planner",
+      "query": "Over 28 days, count Vercel requests for path / with HTTP 200 whose body contains Education Planner, divided by all GET / requests. p95 is the edge duration of those GET / requests. Do not log request bodies beyond the title check."
+    },
+    {
+      "id": "readiness",
+      "surface": "readiness",
+      "group": "readiness",
+      "successTarget": 0.999,
+      "p95TargetMs": 500,
+      "successDefinition": "endpoint ready and outcome ok, among budget outcomes",
+      "query": "Over 28 days, count logs where endpoint = ready and outcome = ok, divided by count logs where endpoint = ready and outcome in (ok, timeout, upstream_error, internal, quota_unavailable, not_configured). p95 of durationMs where endpoint = ready and outcome = ok. The route must not call Anthropic."
+    },
+    {
+      "id": "coach",
+      "surface": "coach",
+      "group": "coach/practice",
+      "successTarget": 0.99,
+      "p95TargetMs": 8000,
+      "successDefinition": "endpoint coach and outcome ok, among budget outcomes",
+      "query": "Over 28 days, count logs where endpoint = coach and outcome = ok, divided by count logs where endpoint = coach and outcome in (ok, timeout, upstream_error, internal, quota_unavailable, not_configured). p95 of durationMs where endpoint = coach and outcome = ok."
+    },
+    {
+      "id": "generate_practice",
+      "surface": "practice",
+      "group": "coach/practice",
+      "successTarget": 0.99,
+      "p95TargetMs": 20000,
+      "successDefinition": "endpoint generate-practice and outcome ok, among budget outcomes",
+      "query": "Over 28 days, count logs where endpoint = generate-practice and outcome = ok, divided by count logs where endpoint = generate-practice and outcome in (ok, timeout, upstream_error, internal, quota_unavailable, not_configured). p95 of durationMs where endpoint = generate-practice and outcome = ok."
+    },
+    {
+      "id": "analyse_homework",
+      "surface": "homework analysis",
+      "group": "homework analysis",
+      "successTarget": 0.99,
+      "p95TargetMs": 120000,
+      "successDefinition": "endpoint analyse-homework and outcome ok, among budget outcomes",
+      "query": "Over 28 days, count logs where endpoint = analyse-homework and outcome = ok, divided by count logs where endpoint = analyse-homework and outcome in (ok, timeout, upstream_error, internal, quota_unavailable, not_configured). p95 of durationMs where endpoint = analyse-homework and outcome = ok. Do not query prompts or images."
+    },
+    {
+      "id": "sync",
+      "surface": "sync",
+      "group": "sync",
+      "successTarget": 0.99,
+      "p95TargetMs": 3000,
+      "successDefinition": "authenticated owner-scoped records and blobs requests with HTTP status below 500",
+      "query": "Over 28 days, in the Supabase API logs, count authenticated requests to /rest/v1/records and /storage/v1/object for the blobs bucket with status below 500, divided by all such requests. p95 of their duration. Do not query row bodies or object bytes. The local harness records p50, p95, p99, and errors for a synthetic owner-scoped sync."
+    }
+  ]
+}

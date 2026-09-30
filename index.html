@@ -405,7 +405,8 @@
         </div>
         <p id="coach-hint" class="hint">Get study advice based on her recent progress. Needs an internet connection.</p>
         <div id="coach-kid-tips" class="coach-kid-tips" hidden></div>
-        <div class="form-actions"><button type="button" id="coach-run" class="btn-primary">Get advice</button></div>
+        <label class="an-consent hidden" id="coach-consent-row"><input type="checkbox" id="coach-consent"> I understand this progress summary will be sent securely for advice.</label>
+        <div class="form-actions"><button type="button" id="coach-run" class="btn-primary" disabled>Get advice</button></div>
         <p id="coach-status" class="hint"></p>
         <div id="coach-output"></div>
       </div>
@@ -464,10 +465,12 @@
           <p class="hint">Optional. When set, the Analyzer shows a gentle guide comparing recent work to the complexity typical for this year. It's context, never a verdict.</p>
         </div>
         <label class="an-ai-toggle"><input type="checkbox" id="set-enhanced-ai"> ✨ Enhanced AI analysis (beta)</label>
-        <p class="hint" id="set-enhanced-ai-hint">When on, a photo of a worksheet is sent securely to our AI provider (Anthropic) for analysis. Results are <b>suggestions only</b> that you review and approve. Photos are deleted from this device after you approve, unless you choose to keep them. Leave this off to use Private Scan Mode, which works fully offline. Default: <b>off</b>.</p>
+        <p class="hint" id="set-enhanced-ai-hint">When on, a photo of a worksheet is sent securely to our AI provider (Anthropic) for analysis. Results are <b>suggestions only</b> that you review and approve. Photos are deleted from this device after you approve, unless you choose to keep them. Leave this off to use Private Scan Mode, which works fully offline. Default: <b>off</b>. The same switch covers the AI coach and generated practice. Each of those asks for a separate tick before anything is sent.</p>
       </div>
       <div class="card">
         <h2>Backup</h2>
+        <p class="hint">Export backup saves schools, logs, photos, and each child's mastery on this device. It leaves this device's Enhanced AI switch, active child, and sign-in alone. It works without a cloud account.</p>
+        <p id="storage-quota-message" class="backup-quota" hidden></p>
         <div class="backup-actions">
           <button id="export-backup" class="btn-secondary">Export backup</button>
           <label class="btn-secondary file-label">Import backup<input id="import-backup" type="file" accept="application/json" hidden /></label>
@@ -501,6 +504,18 @@
         </div>
         <p class="hint">Enabling sync stores your data securely in Supabase so it can appear on your other devices. Leave it off to stay fully offline and on-device.</p>
       </div>
+      <div class="card" id="privacy-card">
+        <h2>Privacy</h2>
+        <p class="hint">Written for parents. It has not been checked by a lawyer and it is not an official approval.</p>
+        <div class="privacy-actions">
+          <button type="button" id="open-privacy-notice" class="btn-secondary">Privacy notice</button>
+          <button type="button" id="open-ai-disclosure" class="btn-secondary">AI disclosure</button>
+          <button type="button" id="export-cloud" class="btn-secondary">Export cloud account</button>
+          <button type="button" id="delete-cloud" class="btn-secondary">Delete cloud account</button>
+        </div>
+        <div id="privacy-panel" class="privacy-panel" hidden></div>
+        <p id="account-status" class="hint"></p>
+      </div>
     </section>
   </main>
 
@@ -533,112 +548,17 @@
   <!-- Pinned supabase-js v2 UMD (attaches window.supabase). Cross-origin: the SW
        passes it through and it is NOT precached, so the app still boots offline
        (sync.js guards for window.supabase being undefined). -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js" integrity="sha384-GFr3yTh5lJznCbZfpTtXnwboFsxqtTQoeTZCRHhE0579KrRmlCzen5AA8ohaB5ug" crossorigin="anonymous"></script>
   <script src="sync-config.js"></script>
   <script src="storage.js"></script>
   <script src="schools-seed.js"></script>
   <script src="sync.js"></script>
+  <script src="report-policy.js"></script>
+  <script src="privacy.js"></script>
+  <script src="observability-config.js"></script>
+  <script src="client-report.js"></script>
+  <script src="public-config.js"></script>
   <script src="app.js"></script>
-  <script>
-    // Register the service worker in production only. On localhost we skip it (and
-    // unregister any existing one) so code edits always show up on reload.
-    (function () {
-      if (!('serviceWorker' in navigator)) return;
-      var host = location.hostname;
-      var isLocal = host === 'localhost' || host === '127.0.0.1' || host === '';
-      if (isLocal) {
-        navigator.serviceWorker.getRegistrations().then(function (regs) {
-          regs.forEach(function (r) { r.unregister(); });
-        });
-        return;
-      }
-
-      var banner = document.getElementById('update-banner');
-      var reloadBtn = document.getElementById('update-reload');
-      var registration = null;
-      var refreshing = false;
-      var clicked = false;
-
-      function doReload() {
-        if (refreshing) return;
-        refreshing = true;
-        // Hide the prompt before the reload so it never lingers once the new
-        // version is coming in — the user shouldn't see "update available" again.
-        hideUpdate();
-        window.location.reload();
-      }
-
-      // When the new SW takes control, the new version is now active: hide the
-      // prompt and reload once to pick up fresh assets.
-      navigator.serviceWorker.addEventListener('controllerchange', doReload);
-
-      function showUpdate() {
-        // Only prompt for a genuine UPDATE — i.e. a controller (old SW) is
-        // already running. On the very first install there's no previous version
-        // to replace, so we stay silent instead of showing a confusing "reload".
-        if (!navigator.serviceWorker.controller) return;
-        if (clicked) return; // an update is already in progress
-        if (banner) banner.classList.remove('hidden');
-      }
-
-      function hideUpdate() {
-        if (banner) banner.classList.add('hidden');
-      }
-
-      // Track a worker until it's installed-and-waiting, then reveal the banner.
-      function trackWorker(worker) {
-        if (!worker) return;
-        if (worker.state === 'installed') { showUpdate(); return; }
-        worker.addEventListener('statechange', function () {
-          if (worker.state === 'installed') showUpdate();
-        });
-      }
-
-      function activateUpdate() {
-        if (clicked) return;
-        clicked = true;
-        // Give immediate feedback and hide the button so the stale "available"
-        // prompt can't confuse or be clicked twice while the update applies.
-        if (reloadBtn) reloadBtn.disabled = true;
-        var label = banner && banner.querySelector('span');
-        if (label) label.textContent = 'Updating…';
-        // Ask the registration to re-check, so a freshly-waiting worker is
-        // definitely present, then message whichever worker is waiting.
-        function messageWaiting() {
-          var waiting = registration && registration.waiting;
-          if (waiting) {
-            // Also listen for it activating, as a second reload trigger.
-            waiting.addEventListener('statechange', function () {
-              if (waiting.state === 'activated') doReload();
-            });
-            waiting.postMessage('SKIP_WAITING');
-          }
-        }
-        messageWaiting();
-        if (registration && registration.update) {
-          registration.update().then(messageWaiting).catch(function () {});
-        }
-        // Guaranteed fallback: even if no worker swaps in, reload so the button
-        // always visibly does something and picks up network-first HTML.
-        setTimeout(doReload, 1500);
-      }
-
-      if (reloadBtn) reloadBtn.addEventListener('click', activateUpdate);
-
-      window.addEventListener('load', function () {
-        navigator.serviceWorker.register('service-worker.js').then(function (reg) {
-          registration = reg;
-          // A worker already waiting (updated on a previous visit).
-          if (reg.waiting) showUpdate();
-          // A worker currently installing — track it to completion.
-          if (reg.installing) trackWorker(reg.installing);
-          // A new worker found later — track it too.
-          reg.addEventListener('updatefound', function () {
-            trackWorker(reg.installing);
-          });
-        });
-      });
-    })();
-  </script>
+  <script src="sw-boot.js"></script>
 </body>
 </html>

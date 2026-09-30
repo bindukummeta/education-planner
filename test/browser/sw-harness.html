@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Service worker smoke harness</title>
+</head>
+<body>
+  <p id="sw-state">registering</p>
+  <script>
+    // The production page unregisters the worker on localhost. This harness
+    // registers the real service-worker.js so the offline shell can be checked.
+    (function () {
+      var state = document.getElementById("sw-state");
+      if (!("serviceWorker" in navigator)) {
+        window.__swError = "unsupported";
+        state.textContent = "unsupported";
+        return;
+      }
+      navigator.serviceWorker.register("/service-worker.js", { scope: "/" }).then(function (reg) {
+        function mark() {
+          window.__swReady = true;
+          state.textContent = "activated";
+        }
+        var worker = reg.active || reg.installing || reg.waiting;
+        if (worker && worker.state === "activated") { mark(); return; }
+        if (!worker) {
+          window.__swError = "no worker";
+          state.textContent = window.__swError;
+          return;
+        }
+        worker.addEventListener("statechange", function () {
+          if (worker.state === "activated") mark();
+          if (worker.state === "redundant") {
+            window.__swError = "redundant";
+            state.textContent = "redundant";
+          }
+        });
+      }).catch(function (err) {
+        window.__swError = String(err && err.message || err);
+        state.textContent = window.__swError;
+      });
+    })();
+  </script>
+</body>
+</html>

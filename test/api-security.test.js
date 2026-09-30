@@ -52,6 +52,10 @@ function scriptFetch(behavior) {
     const u = String(url);
     calls.push({ url: u, opts: opts });
     if (u.indexOf("/auth/v1/user") !== -1) return behavior.auth(opts);
+    if (u.indexOf("/rpc/beta_access_allowed") !== -1) {
+      if (behavior.beta) return behavior.beta(opts);
+      return jsonRes(200, true);
+    }
     if (u.indexOf("/rpc/consume_ai_quota") !== -1) return behavior.quota(opts);
     if (u.indexOf("/rpc/release_ai_concurrency") !== -1) return behavior.release(opts);
     if (u.indexOf("api.anthropic.com") !== -1) return behavior.anthropic(opts);
@@ -353,6 +357,15 @@ function secretFree(value) {
   ok("quota migration revokes browser roles", sql.indexOf("from public, anon, authenticated") !== -1);
   ok("quota helpers are not granted to the service role", sql.indexOf("grant execute on function public.ai_quota_take") === -1);
   ok("quota migration serializes a user's lease", sql.indexOf("pg_advisory_xact_lock") !== -1);
+  ok("quota functions require service_role and keep the grants", sql.indexOf("auth.role()") !== -1 && sql.indexOf("service_role") !== -1 && sql.indexOf("from public, anon, authenticated") !== -1 && sql.indexOf("grant execute on function public.consume_ai_quota") !== -1 && sql.indexOf("grant execute on function public.ai_quota_take") === -1);
+  const pepper = ENV.API_QUOTA_PEPPER;
+  const hash = (headers) => security.hashIp({ API_QUOTA_PEPPER: pepper }, { headers: headers });
+  ok("vercel rightmost address beats a caller-prepended forwarding hop",
+    hash({ "x-vercel-forwarded-for": "8.8.8.8, 203.0.113.50", "x-forwarded-for": "1.1.1.1", "x-real-ip": "9.9.9.9" }) === hash({ "x-vercel-forwarded-for": "203.0.113.50" }));
+  ok("the first x-forwarded-for hop is not the quota address",
+    hash({ "x-forwarded-for": "8.8.8.8, 203.0.113.50" }) === hash({ "x-real-ip": "203.0.113.50" }));
+  ok("an invalid address does not become a bucket key", security.clientIp({ headers: { "x-forwarded-for": "not-an-ip, also-bad" } }) === "unknown");
+  ok("a missing pepper is not hashed with a public fallback", security.hashIp({}, { headers: { "x-real-ip": "203.0.113.10" } }) === null && security.hashIp({ API_QUOTA_PEPPER: "short" }, { headers: {} }) === null);
   const securitySrc = fs.readFileSync(path.join(__dirname, "..", "api", "security.js"), "utf8");
   ok("security module has no in-memory counter", securitySrc.indexOf("new Map") === -1 && securitySrc.indexOf("consume_ai_quota") !== -1);
 

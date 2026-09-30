@@ -3,11 +3,20 @@
 .env.local
 .env.*.local
 
+# Filled restore-drill notes can name projects and times. The blank template stays.
+ops/evidence/filled/
+
 # Vercel
 .vercel
 
 # Node
 node_modules/
+
+# Tests / local CI artifacts
+test-results/
+playwright-report/
+blob-report/
+.playwright/
 
 # OS / editor
 .DS_Store

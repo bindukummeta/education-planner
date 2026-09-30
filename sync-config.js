@@ -1,12 +1,8 @@
-// sync-config.js — PUBLIC values only. The anon key is safe to ship in client
-// code; real security comes from owner-scoped Row Level Security (RLS), not
-// secrecy. See supabase/README.md before enabling Family Sync for more families.
-//
-// To enable cross-device Family Sync, replace the two placeholders below with the
-// Project URL and anon public key from your Supabase project (Project Settings →
-// API), then reload. Until real values are set, sync stays OFF and the app runs
-// exactly as before (fully offline, IndexedDB-only).
+// Shipped disabled for every environment. Live public values are read at boot
+// from GET /api/public-config on this host. Do not put a Supabase URL or anon
+// key in this file: the service worker precaches it, and a committed value
+// would bind every deploy to one project.
 window.EDU_SYNC_CONFIG = {
-  url: "https://eaiqziogpqfhvryoclfs.supabase.co",
-  anonKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVhaXF6aW9ncHFmaHZyeW9jbGZzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ2MjU3MzAsImV4cCI6MjEwMDIwMTczMH0.N3BXjzZk7UuPv3_aK4eikrD6ieGBCvwEb5EriKbBT0E",
+  url: "",
+  anonKey: "",
 };

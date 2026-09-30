@@ -30,10 +30,36 @@
     return Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
   }
 
+  // Shown as-is in the UI. A failed write must not delete data that is already stored.
+  const STORAGE_QUOTA_CODE = "storage_quota";
+  const STORAGE_QUOTA_MESSAGE = "This device is out of space for Education Planner. Export a backup, then remove old worksheet photos you no longer need. Nothing already saved was deleted.";
+
+  function isQuotaExceeded(error) {
+    if (!error) return false;
+    const name = error.name || "";
+    return name === "QuotaExceededError" || name === "NS_ERROR_DOM_QUOTA_REACHED" || error.code === 22;
+  }
+
+  function storageQuotaError() {
+    const err = new Error(STORAGE_QUOTA_MESSAGE);
+    err.name = "EduStorageQuotaError";
+    err.code = STORAGE_QUOTA_CODE;
+    err.publicMessage = STORAGE_QUOTA_MESSAGE;
+    return err;
+  }
+
+  function wrapStorageError(error) {
+    return isQuotaExceeded(error) ? storageQuotaError() : error;
+  }
+
+  function isStorageQuotaError(error) {
+    return !!(error && (error.code === STORAGE_QUOTA_CODE || error.name === "EduStorageQuotaError"));
+  }
+
   function reqP(request) {
     return new Promise((resolve, reject) => {
       request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
+      request.onerror = () => reject(wrapStorageError(request.error));
     });
   }
 
@@ -186,6 +212,31 @@
     const rw = await tx(store, "readwrite");
     await reqP(rw.delete(id));
     emitChange(store, id);
+  }
+  async function clearTombstone(store, id) {
+    const t = await tx("_tombstones", "readwrite");
+    await reqP(t.delete(store + ":" + id));
+  }
+  // Cloud row is older than an import, or its blob bytes are gone. Record a
+  // delete to push later. The timestamp is strictly newer than the remote row
+  // and any tombstone already stored, so another device pulls the delete.
+  // Never removes a local row.
+  async function queueStaleCloudDelete(store, id, remoteUpdatedAt) {
+    if (!store || id == null || id === "") return false;
+    const cur = await getRecord(store, id);
+    if (cur) return false;
+    const remote = typeof remoteUpdatedAt === "number" && isFinite(remoteUpdatedAt) ? remoteUpdatedAt : 0;
+    let current = 0;
+    const existing = await getTombstones(0);
+    for (let i = 0; i < existing.length; i++) {
+      const row = existing[i];
+      if (row && row.store === store && row.id === id && (row.updatedAt || 0) > current) current = row.updatedAt;
+    }
+    let ts = Math.max(Date.now(), remote + 1, current + 1);
+    if (!(ts > remote && ts > current)) ts = Math.max(remote, current) + 1;
+    await writeTombstone(store, id, ts);
+    await markDirty(store, id, ts);
+    return true;
   }
 
   // ---- schools ----
@@ -625,15 +676,100 @@
     await markDirty(STORES.blobs, id, now);
   }
 
-  // ---- meta ----
+  // ---- meta classification ----
+  // Backup format version matches the IndexedDB schema version (DB_VERSION).
+  //
+  // Synced and included in Export backup (promised per-child progress):
+  //   student.yearGroup
+  //   vocabMastery.<studentId>  ninjaMastery.<studentId>
+  //   spellMastery.<studentId>  practiceMastery.<studentId>
+  //
+  // Device-only / internal. Not synced, not written into a backup, and kept
+  // on this device across import:
+  //   activeStudentId — which child this device has open
+  //   analyzer.enhancedAi.enabled — Enhanced AI consent (stays on the device)
+  //   coach.audience — parent or child coach view on this device
+  //   geo.<lookup> — geocode cache
+  //   seedIntroducedNames — preset-school watermark
+  //   lastPulledAt — sync cursor
+  //   importReconcileAt — watermark used once after import
+  //   any other key (unknown keys stay device-only until they are classified)
+  // Family Sync sign-in (auth) is the Supabase session, not a meta row.
+  //
+  // Import cloud reconciliation (see importAll / sync.js pullRemote):
+  //   Import replaces local records. It clears _dirty and _tombstones, then
+  //   rebuilds _dirty only from the restored rows so a pre-import delete cannot
+  //   be pushed. lastPulledAt is reset to 0. importReconcileAt is the backup's
+  //   exportedAt (or the import time when an older file has none). The next
+  //   sync pulls the full account before it pushes. A cloud row at or before
+  //   that watermark which is not in the backup is tombstoned and pushed as a
+  //   delete — it is not copied back onto the device. A cloud delete at or
+  //   before the watermark does not remove restored rows. A cloud change after
+  //   the watermark merges by updatedAt (last write wins).
+  const BACKUP_VERSION = DB_VERSION;
+  const BACKUP_LIMITS = {
+    recordsPerStore: 5000,
+    blobs: 400,
+    blobChars: 8000000,
+    metaEntries: 400,
+    metaValueChars: 100000,
+    idChars: 128,
+  };
+  const BACKUP_STORES = ["schools", "entries", "homework", "reading", "mocks", "events", "students", "projects", "curiosity", "analyses"];
+  const SYNCED_META_EXACT = { "student.yearGroup": true };
+  const SYNCED_META_PREFIXES = ["vocabMastery.", "ninjaMastery.", "spellMastery.", "practiceMastery."];
+  const DEVICE_META_EXACT = {
+    activeStudentId: true,
+    lastPulledAt: true,
+    "analyzer.enhancedAi.enabled": true,
+    "coach.audience": true,
+    seedIntroducedNames: true,
+    importReconcileAt: true,
+  };
+  const DEVICE_META_PREFIXES = ["geo."];
+
+  function isSyncedMetaKey(key) {
+    if (typeof key !== "string" || !key) return false;
+    if (SYNCED_META_EXACT[key]) return true;
+    for (let i = 0; i < SYNCED_META_PREFIXES.length; i++) {
+      const prefix = SYNCED_META_PREFIXES[i];
+      if (key.indexOf(prefix) === 0 && key.length > prefix.length) return true;
+    }
+    return false;
+  }
+  function isKnownDeviceMetaKey(key) {
+    if (typeof key !== "string" || !key) return false;
+    if (DEVICE_META_EXACT[key]) return true;
+    for (let i = 0; i < DEVICE_META_PREFIXES.length; i++) {
+      const prefix = DEVICE_META_PREFIXES[i];
+      if (key.indexOf(prefix) === 0 && key.length > prefix.length) return true;
+    }
+    return false;
+  }
+  // Unknown keys are device-only so a new setting cannot leak into sync or a backup.
+  function isDeviceMetaKey(key) {
+    return !!key && !isSyncedMetaKey(key);
+  }
+
   async function getMeta(key) {
     const store = await tx(STORES.meta, "readonly");
     const row = await reqP(store.get(key));
     return row ? row.value : undefined;
   }
+  async function listMeta() {
+    const store = await tx(STORES.meta, "readonly");
+    return reqP(store.getAll());
+  }
   async function setMeta(key, value) {
+    if (typeof key !== "string" || !key) throw new Error("Invalid meta key");
+    const row = { key: key, value: value };
+    if (isSyncedMetaKey(key)) {
+      row.id = key;
+      row.updatedAt = Date.now();
+    }
     const store = await tx(STORES.meta, "readwrite");
-    return reqP(store.put({ key: key, value: value }));
+    await reqP(store.put(row));
+    if (isSyncedMetaKey(key)) await markDirty(STORES.meta, key, row.updatedAt);
   }
 
   // ---- backup ----
@@ -646,12 +782,108 @@
     });
   }
   function dataURLToBlob(dataURL) {
-    const [head, body] = dataURL.split(",");
+    const parts = String(dataURL).split(",");
+    const head = parts[0] || "";
+    const body = parts[1];
+    if (!body) throw new Error("Invalid backup file");
     const mime = (head.match(/:(.*?);/) || [])[1] || "image/jpeg";
     const bin = atob(body);
     const arr = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
     return new Blob([arr], { type: mime });
+  }
+
+  function invalidBackup() {
+    const err = new Error("Invalid backup file");
+    err.code = "invalid_backup";
+    return err;
+  }
+  function backupTooLarge() {
+    const err = new Error("Backup is too large");
+    err.code = "backup_too_large";
+    return err;
+  }
+  function assertId(id) {
+    if (typeof id !== "string" || !id || id.length > BACKUP_LIMITS.idChars) throw invalidBackup();
+  }
+  function assertRecordList(list, present) {
+    if (!present) return;
+    if (!Array.isArray(list)) throw invalidBackup();
+    if (list.length > BACKUP_LIMITS.recordsPerStore) throw backupTooLarge();
+    for (let i = 0; i < list.length; i++) {
+      const row = list[i];
+      if (!row || typeof row !== "object" || Array.isArray(row)) throw invalidBackup();
+      assertId(row.id);
+    }
+  }
+  function assertBackup(payload) {
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw invalidBackup();
+    const allowed = {
+      version: true, exportedAt: true, blobs: true, meta: true,
+    };
+    BACKUP_STORES.forEach((name) => { allowed[name] = true; });
+    const keys = Object.keys(payload);
+    for (let i = 0; i < keys.length; i++) {
+      if (!allowed[keys[i]]) throw invalidBackup();
+    }
+    if (typeof payload.version !== "number" || !isFinite(payload.version) ||
+        Math.floor(payload.version) !== payload.version || payload.version < 1 ||
+        payload.version > BACKUP_VERSION) {
+      throw invalidBackup();
+    }
+    if (payload.exportedAt != null && (typeof payload.exportedAt !== "number" || !isFinite(payload.exportedAt) || payload.exportedAt < 0)) {
+      throw invalidBackup();
+    }
+    for (let i = 0; i < BACKUP_STORES.length; i++) {
+      const name = BACKUP_STORES[i];
+      assertRecordList(payload[name], Object.prototype.hasOwnProperty.call(payload, name) && payload[name] != null);
+    }
+    if (payload.blobs != null) {
+      if (!Array.isArray(payload.blobs)) throw invalidBackup();
+      if (payload.blobs.length > BACKUP_LIMITS.blobs) throw backupTooLarge();
+      for (let i = 0; i < payload.blobs.length; i++) {
+        const blob = payload.blobs[i];
+        if (!blob || typeof blob !== "object") throw invalidBackup();
+        assertId(blob.id);
+        if (typeof blob.dataURL !== "string" || blob.dataURL.indexOf("data:") !== 0) throw invalidBackup();
+        if (blob.dataURL.length > BACKUP_LIMITS.blobChars) throw backupTooLarge();
+        if (blob.createdAt != null && typeof blob.createdAt !== "number") throw invalidBackup();
+        if (blob.updatedAt != null && typeof blob.updatedAt !== "number") throw invalidBackup();
+      }
+    }
+    if (payload.meta != null) {
+      if (!Array.isArray(payload.meta)) throw invalidBackup();
+      if (payload.meta.length > BACKUP_LIMITS.metaEntries) throw backupTooLarge();
+      const seen = {};
+      for (let i = 0; i < payload.meta.length; i++) {
+        const row = payload.meta[i];
+        if (!row || typeof row !== "object") throw invalidBackup();
+        if (typeof row.key !== "string" || !isSyncedMetaKey(row.key) || seen[row.key]) throw invalidBackup();
+        seen[row.key] = true;
+        if (row.updatedAt != null && (typeof row.updatedAt !== "number" || !isFinite(row.updatedAt))) throw invalidBackup();
+        let encoded;
+        try { encoded = JSON.stringify(row.value); } catch (_) { throw invalidBackup(); }
+        if (typeof encoded !== "string") throw invalidBackup();
+        if (encoded.length > BACKUP_LIMITS.metaValueChars) throw backupTooLarge();
+      }
+    }
+  }
+  function decodeBackupBlobs(list) {
+    const out = [];
+    for (let i = 0; i < list.length; i++) {
+      const blob = list[i];
+      let bytes;
+      try { bytes = dataURLToBlob(blob.dataURL); } catch (_) { throw invalidBackup(); }
+      const createdAt = typeof blob.createdAt === "number" ? blob.createdAt : 0;
+      out.push({
+        id: blob.id,
+        blob: bytes,
+        type: typeof blob.type === "string" && blob.type ? blob.type : (bytes.type || "image/jpeg"),
+        createdAt: createdAt,
+        updatedAt: typeof blob.updatedAt === "number" ? blob.updatedAt : createdAt,
+      });
+    }
+    return out;
   }
 
   async function exportAll() {
@@ -669,83 +901,98 @@
     const rawBlobs = await reqP(blobStore.getAll());
     const blobs = [];
     for (const b of rawBlobs) {
-      blobs.push({ id: b.id, type: b.type, createdAt: b.createdAt, dataURL: await blobToDataURL(b.blob) });
+      blobs.push({
+        id: b.id,
+        type: b.type,
+        createdAt: b.createdAt,
+        updatedAt: b.updatedAt,
+        dataURL: await blobToDataURL(b.blob),
+      });
     }
-    return { version: 5, exportedAt: Date.now(), schools, entries, homework, reading, mocks, events, students, projects, curiosity, analyses, blobs };
-  }
-
-  async function clearStore(name) {
-    const store = await tx(name, "readwrite");
-    return reqP(store.clear());
+    const metaRows = await listMeta();
+    const meta = [];
+    for (let i = 0; i < metaRows.length; i++) {
+      const row = metaRows[i];
+      if (!row || !isSyncedMetaKey(row.key)) continue;
+      meta.push({ key: row.key, value: row.value, updatedAt: row.updatedAt });
+    }
+    return {
+      version: BACKUP_VERSION,
+      exportedAt: Date.now(),
+      schools, entries, homework, reading, mocks, events, students, projects, curiosity, analyses, blobs, meta,
+    };
   }
 
   async function importAll(payload) {
-    if (!payload || !payload.version) throw new Error("Invalid backup file");
-    await clearStore(STORES.schools);
-    await clearStore(STORES.entries);
-    await clearStore(STORES.blobs);
-    await clearStore(STORES.homework);
-    await clearStore(STORES.reading);
-    await clearStore(STORES.mocks);
-    await clearStore(STORES.events);
-    await clearStore(STORES.students);
-    await clearStore(STORES.projects);
-    await clearStore(STORES.curiosity);
-    await clearStore(STORES.analyses);
-    for (const s of payload.schools || []) {
-      const store = await tx(STORES.schools, "readwrite");
-      await reqP(store.put(s));
+    // Validate and decode before any delete. A bad file leaves the device as it was.
+    // Writes share one transaction, so a quota error aborts the replace and keeps
+    // the previous data.
+    assertBackup(payload);
+    const decodedBlobs = decodeBackupBlobs(payload.blobs || []);
+    const hasMeta = Object.prototype.hasOwnProperty.call(payload, "meta") && payload.meta != null;
+    const reconcileAt = (typeof payload.exportedAt === "number" && payload.exportedAt > 0) ? payload.exportedAt : Date.now();
+    const previousMeta = await listMeta();
+    const incomingStudents = payload.students || [];
+    const students = incomingStudents.length
+      ? incomingStudents
+      : [{ id: DEFAULT_STUDENT_ID, name: "L", createdAt: reconcileAt, order: 1 }];
+    const studentIds = {};
+    students.forEach((student) => { studentIds[student.id] = true; });
+
+    const db = await openDB();
+    const names = BACKUP_STORES.concat([STORES.blobs, STORES.meta, "_dirty", "_tombstones"]);
+    const transaction = db.transaction(names, "readwrite");
+    const pending = [];
+    function os(name) { return transaction.objectStore(name); }
+    function putRecord(storeName, record) {
+      const updatedAt = typeof record.updatedAt === "number" ? record.updatedAt : reconcileAt;
+      const stored = record.updatedAt === updatedAt ? record : Object.assign({}, record, { updatedAt: updatedAt });
+      pending.push(reqP(os(storeName).put(stored)));
+      pending.push(reqP(os("_dirty").put({
+        key: storeName + ":" + stored.id,
+        store: storeName,
+        id: stored.id,
+        updatedAt: updatedAt,
+      })));
     }
-    for (const e of payload.entries || []) {
-      const store = await tx(STORES.entries, "readwrite");
-      await reqP(store.put(e));
+    function putMetaRow(row, dirty) {
+      pending.push(reqP(os(STORES.meta).put(row)));
+      if (!dirty) return;
+      pending.push(reqP(os("_dirty").put({
+        key: "meta:" + row.key,
+        store: "meta",
+        id: row.key,
+        updatedAt: row.updatedAt || reconcileAt,
+      })));
     }
-    for (const h of payload.homework || []) {
-      const store = await tx(STORES.homework, "readwrite");
-      await reqP(store.put(h));
+
+    names.forEach((name) => { pending.push(reqP(os(name).clear())); });
+    BACKUP_STORES.forEach((name) => {
+      const rows = name === "students" ? students : (payload[name] || []);
+      for (let i = 0; i < rows.length; i++) putRecord(name, rows[i]);
+    });
+    for (let i = 0; i < decodedBlobs.length; i++) putRecord(STORES.blobs, decodedBlobs[i]);
+
+    for (let i = 0; i < previousMeta.length; i++) {
+      const row = previousMeta[i];
+      if (!row || row.key === "lastPulledAt" || row.key === "importReconcileAt") continue;
+      const keepDevice = isDeviceMetaKey(row.key) && !isSyncedMetaKey(row.key);
+      const keepLegacySynced = !hasMeta && isSyncedMetaKey(row.key);
+      if (!keepDevice && !keepLegacySynced) continue;
+      if (row.key === "activeStudentId" && !studentIds[row.value]) continue;
+      putMetaRow(keepLegacySynced ? row : { key: row.key, value: row.value }, keepLegacySynced);
     }
-    for (const r of payload.reading || []) {
-      const store = await tx(STORES.reading, "readwrite");
-      await reqP(store.put(r));
+    if (hasMeta) {
+      for (let i = 0; i < payload.meta.length; i++) {
+        const row = payload.meta[i];
+        const updatedAt = typeof row.updatedAt === "number" ? row.updatedAt : reconcileAt;
+        putMetaRow({ key: row.key, value: row.value, id: row.key, updatedAt: updatedAt }, true);
+      }
     }
-    for (const m of payload.mocks || []) {
-      const store = await tx(STORES.mocks, "readwrite");
-      await reqP(store.put(m));
-    }
-    for (const ev of payload.events || []) {
-      const store = await tx(STORES.events, "readwrite");
-      await reqP(store.put(ev));
-    }
-    // Import students first so projects' studentId references resolve.
-    for (const st of payload.students || []) {
-      const store = await tx(STORES.students, "readwrite");
-      await reqP(store.put(st));
-    }
-    for (const p of payload.projects || []) {
-      const store = await tx(STORES.projects, "readwrite");
-      await reqP(store.put(p));
-    }
-    // The `|| []` keeps v1–v3 backups (no curiosity key) importing cleanly.
-    for (const c of payload.curiosity || []) {
-      const store = await tx(STORES.curiosity, "readwrite");
-      await reqP(store.put(c));
-    }
-    // The `|| []` keeps v1–v4 backups (no analyses key) importing cleanly.
-    for (const a of payload.analyses || []) {
-      const store = await tx(STORES.analyses, "readwrite");
-      await reqP(store.put(a));
-    }
-    // Post-import safety: re-seed the default student if the backup carried none
-    // (e.g. a v1/v2 backup), so the app always has an active student.
-    const stu = await getStudents();
-    if (!stu.length) {
-      const store = await tx(STORES.students, "readwrite");
-      await reqP(store.put({ id: DEFAULT_STUDENT_ID, name: "L", createdAt: Date.now(), order: 1 }));
-    }
-    for (const b of payload.blobs || []) {
-      const store = await tx(STORES.blobs, "readwrite");
-      await reqP(store.put({ id: b.id, blob: dataURLToBlob(b.dataURL), type: b.type, createdAt: b.createdAt }));
-    }
+    putMetaRow({ key: "lastPulledAt", value: 0 }, false);
+    putMetaRow({ key: "importReconcileAt", value: reconcileAt }, false);
+    await Promise.all(pending);
+    emitChange("meta", "import");
     return true;
   }
 
@@ -769,8 +1016,10 @@
     getBlob, putBlob, deleteBlob,
     getMeta, setMeta,
     exportAll, importAll,
+    BACKUP_VERSION, BACKUP_LIMITS, STORAGE_QUOTA_MESSAGE,
+    isSyncedMetaKey, isKnownDeviceMetaKey, isDeviceMetaKey, isStorageQuotaError,
     // Internal sync surface (used by sync.js only; not part of the app API).
     onChange, getDirty, clearDirty, getTombstones, getRecord,
-    applyRemote, applyRemoteDelete,
+    applyRemote, applyRemoteDelete, clearTombstone, queueStaleCloudDelete,
   };
 })();

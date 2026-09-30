@@ -1,4 +1,4 @@
-const CACHE = "eduplanner-v58";
+const CACHE = "eduplanner-v64";
 const ASSETS = [
   "./",
   "./index.html",
@@ -7,6 +7,12 @@ const ASSETS = [
   "./schools-seed.js",
   "./sync-config.js",
   "./sync.js",
+  "./report-policy.js",
+  "./privacy.js",
+  "./observability-config.js",
+  "./public-config.js",
+  "./client-report.js",
+  "./sw-boot.js",
   "./app.js",
   "./manifest.webmanifest",
   "./icons/icon-192.png",
@@ -47,6 +53,10 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(req.url);
   // Cross-origin (e.g. postcodes.io) — pass straight through, no caching.
   if (url.origin !== self.location.origin) return;
+
+  // API responses are per deployment. Caching /api/public-config would keep
+  // one environment's Supabase URL and anon key after this host serves another.
+  if (url.pathname.indexOf("/api/") === 0) return;
 
   // Navigations / HTML → network-first: fresh when online, cache when offline.
   const isNavigation =

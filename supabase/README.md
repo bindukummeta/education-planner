@@ -1,5 +1,7 @@
 # Account-isolated Family Sync
 
+Run these steps against one environment's Supabase project. Local, staging, and production are different projects ([../docs/environments.md](../docs/environments.md)).
+
 Ship the database change and the matching `sync.js` together. The client stamps `owner`, upserts with `onConflict: "owner,store,id"`, and stores image bytes at `<uid>/<blobId>`. A session with no user id does not push or pull.
 
 ## Coordinated rollout
@@ -27,3 +29,7 @@ Use two browsers (or profiles) and two different emails.
 5. Swap the accounts and repeat.
 
 A passing `verify-account-isolation.sql` report plus this client check is the gate. Dashboard queries run as a privileged role and can still see every row.
+
+## Invited beta
+
+Do not run [`2026-beta-admission.sql`](2026-beta-admission.sql) as part of the rollout above. It is a separate, versioned gate for 50 to 200 invited families. The default mode is `beta`, the allowlist starts empty, and row policies then deny everyone who is not admitted. The API calls `beta_access_allowed` on every production request because the service role bypasses those policies. Set `BETA_MODE=on` in that window. Leaving it unset does not turn the check off. `BETA_MODE=off` is rejected. Procedure: [`../docs/runbooks/beta-admission.md`](../docs/runbooks/beta-admission.md). Applying the file, or reading this section, does not launch a beta.

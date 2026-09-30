@@ -5,8 +5,13 @@
 -- in-memory limiter: counters and homework-analysis leases live in Postgres
 -- and are shared by every serverless instance.
 --
--- The browser anon key cannot execute these functions. API routes call them
--- with the service role. Windows are the clock minute and the UTC day.
+-- Trust boundary: these functions are SECURITY DEFINER and can change any
+-- account's counters. Execute is granted only to service_role, and each
+-- function returns without writing unless auth.role() is service_role.
+-- Limits are arguments from the API process, which reads them from its own
+-- environment. Do not grant execute to anon or authenticated, and do not let
+-- a user JWT supply the limits. The browser anon key cannot execute them.
+-- Windows are the clock minute and the UTC day.
 -- A homework lease expires on its own if a function is killed before release.
 -- Re-running this script replaces the functions and does not delete counters.
 -- ---------------------------------------------------------------------------
@@ -49,6 +54,9 @@ as $$
 declare
   v_hits integer;
 begin
+  if coalesce(auth.role(), '') is distinct from 'service_role' then
+    return false;
+  end if;
   if p_bucket is null or length(p_bucket) < 8 or length(p_bucket) > 240 then
     return false;
   end if;
@@ -84,6 +92,9 @@ security definer
 set search_path = public
 as $$
 begin
+  if coalesce(auth.role(), '') is distinct from 'service_role' then
+    return;
+  end if;
   update public.ai_quota_counters
      set hits = greatest(hits - 1, 0)
    where bucket = p_bucket;
@@ -117,6 +128,9 @@ declare
   v_lease uuid;
   taken text[] := array[]::text[];
 begin
+  if coalesce(auth.role(), '') is distinct from 'service_role' then
+    return jsonb_build_object('ok', false, 'reason', 'forbidden');
+  end if;
   if p_user_id is null
      or p_endpoint not in ('coach', 'generate-practice', 'analyse-homework')
      or p_ip_hash is null
@@ -191,6 +205,9 @@ security definer
 set search_path = public
 as $$
 begin
+  if coalesce(auth.role(), '') is distinct from 'service_role' then
+    return;
+  end if;
   if p_lease_id is null then
     return;
   end if;

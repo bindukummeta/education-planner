@@ -1,0 +1,16 @@
+rules:
+  - id: edu-no-eval
+    languages: [javascript]
+    severity: ERROR
+    message: eval is not allowed
+    pattern: eval(...)
+  - id: edu-no-function-constructor
+    languages: [javascript]
+    severity: ERROR
+    message: The Function constructor is not allowed
+    pattern: new Function(...)
+  - id: edu-no-child-process
+    languages: [javascript]
+    severity: ERROR
+    message: Do not shell out from the app
+    pattern: child_process.exec(...)

@@ -1,0 +1,21 @@
+{
+  "assumptionClass": "non-pricing",
+  "notice": "Sample usage assumptions for a 5000 registered-user month. These numbers are not Anthropic, Vercel, or Supabase prices. A run with prices set to null must not print a dollar total.",
+  "registeredUsers": 5000,
+  "activeFamilyPercent": 20,
+  "callsPerActiveFamily": {
+    "coach": 8,
+    "generate-practice": 4,
+    "analyse-homework": 2
+  },
+  "homeworkPagesPerCall": 1,
+  "tokens": {
+    "coach": { "input": 2000, "output": 600 },
+    "generate-practice": { "input": 2500, "output": 800 },
+    "analyse-homework": { "inputPerPage": 4000, "output": 900 }
+  },
+  "storageGbPerActiveFamily": 0.05,
+  "readinessProbesPerMonth": 8640,
+  "prices": null,
+  "pricesClass": "user-supplied-required"
+}

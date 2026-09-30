@@ -10,9 +10,34 @@
     },
     "api/generate-practice.js": {
       "maxDuration": 30
+    },
+    "api/ready.js": {
+      "maxDuration": 5
+    },
+    "api/client-report.js": {
+      "maxDuration": 5
+    },
+    "api/account-export.js": {
+      "maxDuration": 60
+    },
+    "api/account-delete.js": {
+      "maxDuration": 60
+    },
+    "api/public-config.js": {
+      "maxDuration": 5
     }
   },
   "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "Content-Security-Policy", "value": "default-src 'self'; script-src 'self' 'sha384-GFr3yTh5lJznCbZfpTtXnwboFsxqtTQoeTZCRHhE0579KrRmlCzen5AA8ohaB5ug'; style-src 'self' https://fonts.googleapis.com; style-src-attr 'unsafe-inline'; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.postcodes.io; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'" },
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "Referrer-Policy", "value": "no-referrer" },
+        { "key": "Permissions-Policy", "value": "camera=(), microphone=(), geolocation=(), payment=()" },
+        { "key": "X-Frame-Options", "value": "DENY" }
+      ]
+    },
     {
       "source": "/service-worker.js",
       "headers": [
@@ -30,6 +55,12 @@
       "source": "/index.html",
       "headers": [
         { "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }
+      ]
+    },
+    {
+      "source": "/api/public-config",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-store" }
       ]
     }
   ]

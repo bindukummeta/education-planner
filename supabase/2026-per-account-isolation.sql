@@ -208,6 +208,31 @@ begin
   create index if not exists records_owner_updated_at_idx
     on public.records (owner, updated_at);
 
+  create index if not exists records_owner_updated_at_store_id_idx
+    on public.records (owner, updated_at, store, id);
+
+  -- Stable helper so a later rerun of this file does not drop the beta gate.
+  -- If 2026-beta-admission.sql has created beta_access_allowed, keep calling it.
+  execute $sync_access$
+    create or replace function public.sync_access_allowed(uid uuid)
+    returns boolean
+    language plpgsql
+    stable
+    security definer
+    set search_path = public
+    as $body$
+    begin
+      if to_regprocedure('public.beta_access_allowed(uuid)') is not null then
+        return public.beta_access_allowed(uid);
+      end if;
+      return true;
+    end;
+    $body$;
+  $sync_access$;
+
+  revoke all on function public.sync_access_allowed(uuid) from public, anon;
+  grant execute on function public.sync_access_allowed(uuid) to authenticated, service_role;
+
   alter table public.records enable row level security;
   revoke all on table public.records from public;
   revoke all on table public.records from anon;
@@ -237,37 +262,48 @@ begin
   end loop;
 
   create policy "records owner select" on public.records
-    for select using (auth.uid() = owner);
+    for select using (auth.uid() = owner and public.sync_access_allowed(auth.uid()));
 
   create policy "records owner insert" on public.records
-    for insert with check (auth.uid() = owner);
+    for insert with check (auth.uid() = owner and public.sync_access_allowed(auth.uid()));
 
   create policy "records owner update" on public.records
-    for update using (auth.uid() = owner) with check (auth.uid() = owner);
+    for update using (auth.uid() = owner and public.sync_access_allowed(auth.uid()))
+    with check (auth.uid() = owner and public.sync_access_allowed(auth.uid()));
 
   create policy "records owner delete" on public.records
-    for delete using (auth.uid() = owner);
+    for delete using (auth.uid() = owner and public.sync_access_allowed(auth.uid()));
 
   create policy "blobs owner select" on storage.objects
     for select using (
-      bucket_id = 'blobs' and (storage.foldername(name))[1] = auth.uid()::text
+      bucket_id = 'blobs'
+      and (storage.foldername(name))[1] = auth.uid()::text
+      and public.sync_access_allowed(auth.uid())
     );
 
   create policy "blobs owner insert" on storage.objects
     for insert with check (
-      bucket_id = 'blobs' and (storage.foldername(name))[1] = auth.uid()::text
+      bucket_id = 'blobs'
+      and (storage.foldername(name))[1] = auth.uid()::text
+      and public.sync_access_allowed(auth.uid())
     );
 
   create policy "blobs owner update" on storage.objects
     for update using (
-      bucket_id = 'blobs' and (storage.foldername(name))[1] = auth.uid()::text
+      bucket_id = 'blobs'
+      and (storage.foldername(name))[1] = auth.uid()::text
+      and public.sync_access_allowed(auth.uid())
     ) with check (
-      bucket_id = 'blobs' and (storage.foldername(name))[1] = auth.uid()::text
+      bucket_id = 'blobs'
+      and (storage.foldername(name))[1] = auth.uid()::text
+      and public.sync_access_allowed(auth.uid())
     );
 
   create policy "blobs owner delete" on storage.objects
     for delete using (
-      bucket_id = 'blobs' and (storage.foldername(name))[1] = auth.uid()::text
+      bucket_id = 'blobs'
+      and (storage.foldername(name))[1] = auth.uid()::text
+      and public.sync_access_allowed(auth.uid())
     );
 end
 $isolation$;

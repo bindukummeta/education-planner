@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "note": "Smoke and local heavy runs use a fake provider, so these caps are tighter than the 28-day SLO tails. They are not production measurements.",
+  "scenarios": {
+    "static_shell": { "p95Ms": 800, "p99Ms": 1500, "maxErrors": 0 },
+    "readiness": { "p95Ms": 100, "p99Ms": 250, "maxErrors": 0 },
+    "sync": { "p95Ms": 500, "p99Ms": 1000, "maxErrors": 0 },
+    "coach": { "p95Ms": 250, "p99Ms": 500, "maxErrors": 0 },
+    "generate_practice": { "p95Ms": 250, "p99Ms": 500, "maxErrors": 0 },
+    "analyse_homework": { "p95Ms": 400, "p99Ms": 800, "maxErrors": 0 }
+  }
+}

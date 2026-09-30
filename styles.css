@@ -597,6 +597,7 @@ body.no-tabbar .tabbar { display: none; }
 /* ---- Footer ---- */
 .app-footer { text-align: center; color: var(--muted); font-size: 12px; padding: 12px 16px 28px; }
 .backup-actions { display: flex; gap: 10px; justify-content: center; margin-bottom: 10px; }
+.backup-quota { color: var(--rag-red); font-size: 13.5px; line-height: 1.45; margin: 0 0 10px; }
 .file-label { display: inline-flex; align-items: center; }
 .footer-source { margin: 10px 0 0; font-size: 12px; color: var(--muted); }
 .footer-source a { color: inherit; text-decoration: underline; }
@@ -613,6 +614,7 @@ body.no-tabbar .tabbar { display: none; }
   border-radius: var(--r-md); box-shadow: var(--shadow-lg);
   font-size: 14px; font-weight: 500; z-index: 50;
 }
+.update-banner.hidden { display: none; }
 .update-banner .btn-primary { flex: 0 0 auto; padding: 8px 14px; }
 
 /* ---- Dashboard ---- */
@@ -1110,8 +1112,11 @@ body.no-tabbar .tabbar { display: none; }
 .an-answer input { width: 100%; }
 .an-answer-hint { font-weight: 400; font-style: italic; color: var(--muted); opacity: .8; }
 .an-consent, .an-keep { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; margin-bottom: 10px; }
+.an-consent.hidden, .an-keep.hidden { display: none; }
 .an-mode-pick { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; margin-bottom: 10px; }
 .an-ai-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 700; }
+.privacy-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+.privacy-panel p { margin: 0 0 10px; font-size: 14px; line-height: 1.45; }
 
 /* ---- Gap to Target ---- */
 .gap-countdown { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 4px 0; }

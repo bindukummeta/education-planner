@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Unit and API tests
+        run: npm test
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Secret scan
+        run: npm run secrets
+
+      - name: npm audit
+        run: npm audit --audit-level=high
+
+      - name: Install gitleaks
+        run: |
+          curl -sSL -o gitleaks.tar.gz https://github.com/gitleaks/gitleaks/releases/download/v8.24.2/gitleaks_8.24.2_linux_x64.tar.gz
+          echo "fa0500f6b7e41d28791ebc680f5dd9899cd42b58629218a5f041efa899151a8e  gitleaks.tar.gz" | sha256sum --check -
+          tar -xzf gitleaks.tar.gz gitleaks
+          sudo mv gitleaks /usr/local/bin/gitleaks
+
+      - name: Gitleaks repository scan
+        run: gitleaks detect --no-git --source . --redact --no-banner --exit-code 1
+
+      - name: Gitleaks diff scan
+        if: github.event_name == 'pull_request'
+        run: gitleaks detect --source . --log-opts="origin/${{ github.base_ref }}..HEAD" --redact --no-banner --exit-code 1
+
+      - name: SAST
+        run: >-
+          docker run --rm -v "$PWD:/src" -w /src
+          semgrep/semgrep@sha256:a265d09a9ca712e6624aca09056304ce4314a695b7028d65c041dd53fd44c700
+          semgrep scan --config .semgrep.yml --error --metrics=off
+          --exclude vendor --exclude node_modules
+
+      - name: Load smoke (not soak)
+        run: npm run test:load
+
+      - name: Syntax checks
+        run: npm run check:syntax
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Browser smoke tests
+        run: npm run test:browser

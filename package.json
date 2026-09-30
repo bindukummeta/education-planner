@@ -7,6 +7,22 @@
     "node": ">=18"
   },
   "scripts": {
-    "test": "node test/heuristics.test.js && node test/vocab-quest.test.js && node test/spelling-wizard.test.js && node test/number-ninja.test.js && node test/sync.test.js && node test/analyzer-progress.test.js && node test/layout-safe-area.test.js && node test/coach-kid.test.js && node test/coach-api.test.js && node test/generate-practice-api.test.js && node test/api-security.test.js"
+    "test": "node test/heuristics.test.js && node test/vocab-quest.test.js && node test/spelling-wizard.test.js && node test/number-ninja.test.js && node test/sync.test.js && node test/analyzer-progress.test.js && node test/layout-safe-area.test.js && node test/coach-kid.test.js && node test/coach-api.test.js && node test/generate-practice-api.test.js && node test/api-security.test.js && node test/analyse-homework-api.test.js && node test/observability.test.js && node test/synthetic-check.test.js && node test/privacy.test.js && node test/account-api.test.js && node test/public-config.test.js && node test/slo.test.js && node test/cost-model.test.js && node test/beta-admission.test.js && node test/load-harness.test.js && node test/security-headers.test.js",
+    "lint": "eslint .",
+    "secrets": "node scripts/secret-scan.js",
+    "test:load": "node scripts/load-harness.js --profile smoke",
+    "test:load:heavy": "node scripts/load-harness.js --profile heavy",
+    "slo": "node scripts/slo.js",
+    "cost-model": "node scripts/cost-model.js",
+    "check:syntax": "node scripts/check-syntax.js",
+    "check:env": "node scripts/validate-env.js",
+    "runbook": "node scripts/runbook.js",
+    "test:browser": "playwright test"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.55.1",
+    "eslint": "^10.11.0",
+    "globals": "^15.15.0"
   }
 }

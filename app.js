@@ -13,6 +13,7 @@
 
   let activeSubject = "vr";
   let coachAudience = "parent";
+  let coachCloudOn = false;
   let objectURLs = [];
 
   // ---- settings (localStorage) ----
@@ -643,15 +644,129 @@
   }
 
   // ============ BACKUP ============
+  function showStorageQuota(err) {
+    const msg = (err && (err.publicMessage || err.message)) ||
+      (window.EduStore && EduStore.STORAGE_QUOTA_MESSAGE) ||
+      "This device is out of space for Education Planner. Export a backup, then remove old worksheet photos you no longer need. Nothing already saved was deleted.";
+    showView("settings");
+    const el = $("storage-quota-message");
+    if (el) {
+      el.hidden = false;
+      el.textContent = msg;
+    }
+    const btn = $("export-backup");
+    if (btn) btn.focus();
+  }
+
   async function exportBackup() {
-    const payload = await EduStore.exportAll();
-    const blob = new Blob([JSON.stringify(payload)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "education-planner-backup-" + todayISO() + ".json";
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    try {
+      const payload = await EduStore.exportAll();
+      const blob = new Blob([JSON.stringify(payload)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "education-planner-backup-" + todayISO() + ".json";
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (err) {
+      if (window.EduStore && EduStore.isStorageQuotaError && EduStore.isStorageQuotaError(err)) showStorageQuota(err);
+      else alert("Could not export: " + (err && err.message ? err.message : "Something went wrong."));
+    }
+  }
+
+  function privacyCopy(kind) {
+    const pack = window.EduPrivacy;
+    if (kind === "ai") {
+      return (pack && pack.aiDisclosure) || ["This explanation has not been checked by a lawyer."];
+    }
+    return (pack && pack.privacyNotice) || ["This notice has not been checked by a lawyer."];
+  }
+
+  function showPrivacyCopy(kind) {
+    const panel = $("privacy-panel");
+    if (!panel) return;
+    panel.hidden = false;
+    panel.innerHTML = "";
+    privacyCopy(kind).forEach((text) => {
+      const p = document.createElement("p");
+      p.textContent = text;
+      panel.appendChild(p);
+    });
+  }
+
+  function accountStatus(message) {
+    const el = $("account-status");
+    if (el) el.textContent = message || "";
+  }
+
+  async function exportCloudAccount() {
+    accountStatus("Preparing the cloud export…");
+    try {
+      const res = await fetch("/api/account-export", {
+        method: "POST",
+        headers: await aiAuthHeaders(),
+        body: "{}",
+      });
+      let data = null;
+      try { data = await res.json(); } catch (_) { data = null; }
+      if (!res.ok) throw new Error((data && data.error) || "Could not export the cloud account.");
+      const blob = new Blob([JSON.stringify(data)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "education-planner-cloud-export-" + todayISO() + ".json";
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      accountStatus("Cloud export downloaded. The on-device backup is separate.");
+    } catch (err) {
+      accountStatus((err && err.code === "auth") ? err.message : "Could not export the cloud account. Please try again.");
+    }
+  }
+
+  function openDeleteCloud() {
+    const phrase = (window.EduPrivacy && EduPrivacy.DELETE_CONFIRMATION) || "DELETE MY CLOUD ACCOUNT";
+    openModal("Delete cloud account",
+      "<p>This permanently deletes the Family Sync copy of your data, worksheet photos stored in the cloud, and the sign-in. Data kept only on this device is not removed.</p>" +
+      "<p class=\"hint\">Type " + esc(phrase) + " to confirm. This cannot be undone. This screen is not a legal approval.</p>" +
+      "<input id=\"delete-confirm-text\" autocomplete=\"off\" />" +
+      "<label class=\"an-consent\"><input type=\"checkbox\" id=\"delete-confirm-check\"> I understand this permanently deletes the cloud account.</label>" +
+      "<p id=\"delete-confirm-status\" class=\"hint\"></p>" +
+      "<div class=\"form-actions\">" +
+      "<button type=\"button\" id=\"delete-confirm-go\" class=\"btn-primary\" disabled>Delete cloud account permanently</button>" +
+      "<button type=\"button\" id=\"delete-confirm-cancel\" class=\"btn-secondary\">Cancel</button>" +
+      "</div>");
+    const input = $("delete-confirm-text");
+    const check = $("delete-confirm-check");
+    const go = $("delete-confirm-go");
+    const status = $("delete-confirm-status");
+    function syncGo() { go.disabled = !(input.value === phrase && check.checked === true); }
+    input.addEventListener("input", syncGo);
+    check.addEventListener("change", syncGo);
+    $("delete-confirm-cancel").addEventListener("click", closeModal);
+    go.addEventListener("click", async () => {
+      if (input.value !== phrase || check.checked !== true) return;
+      go.disabled = true;
+      status.textContent = "Deleting the cloud account…";
+      try {
+        const res = await fetch("/api/account-delete", {
+          method: "POST",
+          headers: await aiAuthHeaders(),
+          body: JSON.stringify({ confirm: phrase }),
+        });
+        let data = null;
+        try { data = await res.json(); } catch (_) { data = null; }
+        if (!res.ok || !data || data.deleted !== true) {
+          throw new Error((data && data.error) || "Could not delete the cloud account.");
+        }
+        closeModal();
+        try { if (window.EduSync) await EduSync.signOut(); } catch (_) {}
+        accountStatus("The cloud account has been deleted. Data on this device is still here.");
+      } catch (err) {
+        status.textContent = (err && err.code === "auth") ? err.message : "Could not delete the cloud account. Please try again.";
+        syncGo();
+      }
+    });
+    if (input) input.focus();
   }
   function importBackup(file) {
     if (!file) return;
@@ -664,7 +779,11 @@
         renderSchools(); renderEntries(); renderProgress();
         renderHomework(); renderReading(); renderMocks();
         renderCalendar(); renderDashboard();
-      } catch (err) { alert("Could not import: " + err.message); }
+        renderSettings();
+      } catch (err) {
+        if (window.EduStore && EduStore.isStorageQuotaError && EduStore.isStorageQuotaError(err)) showStorageQuota(err);
+        else alert("Could not import: " + (err && err.message ? err.message : "Invalid backup file"));
+      }
       $("import-backup").value = "";
     };
     fr.readAsText(file);
@@ -1231,9 +1350,15 @@
   }
 
   // ============ AI COACH ============
+  function enhancedAiEnabled(value) {
+    return value === true || value === "true";
+  }
   async function prepareCoach() {
     var saved = await EduStore.getMeta("coach.audience");
     coachAudience = (saved === "child") ? "child" : "parent";
+    coachCloudOn = enhancedAiEnabled(await EduStore.getMeta("analyzer.enhancedAi.enabled"));
+    var box = $("coach-consent");
+    if (box) box.checked = false;
     applyCoachMode();
     if (coachAudience === "child") await renderKidCoachTips();
   }
@@ -1246,13 +1371,24 @@
     if (tips) tips.hidden = !kid;
     var hint = $("coach-hint");
     if (hint) hint.textContent = kid
-      ? "Your friendly coach with fun next steps. The games work offline; tap ✨ for a cheer (needs internet)."
-      : "Get study advice based on her recent progress. Needs an internet connection.";
+      ? "Your friendly coach with fun next steps. The games work offline. A cheer needs Enhanced AI and a tick each time."
+      : "Study advice from recent progress. Enhanced AI must be on, and you tick a box each time a summary is sent.";
+    var row = $("coach-consent-row");
+    if (row) row.classList.toggle("hidden", !coachCloudOn);
+    var box = $("coach-consent");
     var run = $("coach-run");
-    if (run) run.textContent = kid ? "✨ Get a cheer" : "Get advice";
+    if (run) {
+      run.textContent = kid ? "✨ Get a cheer" : "Get advice";
+      run.disabled = !coachCloudOn || !(box && box.checked === true);
+    }
     var status = $("coach-status");
-    if (status && !navigator.onLine && !kid) status.textContent = "You're offline — connect to the internet to get advice.";
-    else if (status && kid) status.textContent = "";
+    if (!status) return;
+    if (!coachCloudOn) {
+      status.textContent = "Cloud AI is off. Turn on Enhanced AI in Settings to send a progress summary. On-device tips stay on this device.";
+      return;
+    }
+    if (!navigator.onLine && !kid) status.textContent = "You're offline — connect to the internet to get advice.";
+    else status.textContent = "";
   }
   async function renderKidCoachTips() {
     var box = $("coach-kid-tips");
@@ -1369,6 +1505,16 @@
   async function runCoach() {
     const status = $("coach-status");
     const out = $("coach-output");
+    const enabled = await EduStore.getMeta("analyzer.enhancedAi.enabled");
+    if (!enhancedAiEnabled(enabled)) {
+      status.textContent = "Enhanced AI is turned off. You can turn it on in Settings.";
+      return;
+    }
+    const consent = $("coach-consent");
+    if (!consent || consent.checked !== true) {
+      status.textContent = "Please confirm the consent box to use the AI coach.";
+      return;
+    }
     if (!navigator.onLine) {
       status.textContent = "You're offline — connect to the internet to get advice.";
       return;
@@ -1395,7 +1541,10 @@
     } catch (err) {
       status.textContent = (err && err.code === "auth") ? err.message : ("Couldn't get advice: " + err.message);
     } finally {
-      $("coach-run").disabled = false;
+      const held = status.textContent;
+      if (consent) consent.checked = false;
+      applyCoachMode();
+      if (held) status.textContent = held;
     }
   }
 
@@ -5064,6 +5213,20 @@
   // ============ INIT ============
   async function init() {
     await EduStore.ready();
+    window.addEventListener("unhandledrejection", (event) => {
+      if (window.EduStore && EduStore.isStorageQuotaError && EduStore.isStorageQuotaError(event.reason)) {
+        event.preventDefault();
+        showStorageQuota(event.reason);
+      }
+    });
+    // Public config is fetched for this host only. A missing endpoint, a refused
+    // binding, or a network error leaves Family Sync off and the local app usable.
+    if (window.EduPublicConfig && EduPublicConfig.apply) {
+      try { await EduPublicConfig.apply(window); } catch (_) {}
+    }
+    if (window.EduClientReport && EduClientReport.install) {
+      try { EduClientReport.install(window); } catch (_) {}
+    }
     // Optional cloud sync (no-op unless supabase-js loaded + real config present).
     if (window.EduSync) EduSync.init(window.EDU_SYNC_CONFIG);
     if (window.SchoolsSeed) {
@@ -5120,6 +5283,8 @@
       if (!btn) return;
       coachAudience = btn.getAttribute("data-aud") === "child" ? "child" : "parent";
       await EduStore.setMeta("coach.audience", coachAudience);
+      var coachBox = $("coach-consent");
+      if (coachBox) coachBox.checked = false;
       applyCoachMode();
       $("coach-output").textContent = "";
       $("coach-status").textContent = "";
@@ -5127,6 +5292,11 @@
     });
     $("export-backup").addEventListener("click", exportBackup);
     $("import-backup").addEventListener("change", (e) => importBackup(e.target.files[0]));
+    $("coach-consent").addEventListener("change", () => applyCoachMode());
+    $("open-privacy-notice").addEventListener("click", () => showPrivacyCopy("notice"));
+    $("open-ai-disclosure").addEventListener("click", () => showPrivacyCopy("ai"));
+    $("export-cloud").addEventListener("click", () => exportCloudAccount());
+    $("delete-cloud").addEventListener("click", () => openDeleteCloud());
 
     // Family Sync (all guarded — the card is inert if EduSync isn't present).
     if (window.EduSync) {

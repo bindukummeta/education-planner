@@ -1,0 +1,127 @@
+{
+  "schemaVersion": 1,
+  "externalActivationGate": {
+    "status": "blocked",
+    "reason": "Vercel, Supabase, and Anthropic dashboards require account credentials this repository does not have. This file is the definition to apply; it is not a live alert.",
+    "activation": [
+      "In the Vercel project, open Logs and Observability and create one alert per vercel signal using that signal's query and threshold.",
+      "In the Supabase project, open Database usage and Storage and create the storage-growth alert. Do not query row contents.",
+      "In the Anthropic console, set a workspace spend limit and an alert at the anthropic_spend threshold. Do not paste the API key into a dashboard.",
+      "Create the GitHub Actions repository secret SYNTHETIC_BASE_URL as the production https origin, then run the Synthetic workflow."
+    ]
+  },
+  "signals": [
+    {
+      "id": "request_volume",
+      "provider": "vercel",
+      "window": "5m",
+      "comparator": "gt",
+      "threshold": 300,
+      "unit": "requests",
+      "query": "count logs where endpoint in (coach, generate-practice, analyse-homework, ready, client-report)",
+      "steps": [
+        "Open the Vercel project, then Logs.",
+        "Filter on the JSON field endpoint for coach, generate-practice, analyse-homework, ready, and client-report.",
+        "Alert when that count exceeds 300 in 5 minutes."
+      ]
+    },
+    {
+      "id": "http_4xx",
+      "provider": "vercel",
+      "window": "15m",
+      "comparator": "gt",
+      "threshold": 50,
+      "unit": "responses",
+      "query": "count logs where httpStatus >= 400 and httpStatus <= 499",
+      "steps": [
+        "Open Vercel Logs.",
+        "Count JSON lines whose httpStatus is 400 through 499.",
+        "Alert when that count exceeds 50 in 15 minutes. Review outcome for rate_limited separately from other 4xx."
+      ]
+    },
+    {
+      "id": "http_5xx",
+      "provider": "vercel",
+      "window": "5m",
+      "comparator": "gt",
+      "threshold": 5,
+      "unit": "responses",
+      "query": "count logs where httpStatus >= 500 and httpStatus <= 599",
+      "steps": [
+        "Open Vercel Logs.",
+        "Count JSON lines whose httpStatus is 500 through 599.",
+        "Alert when that count exceeds 5 in 5 minutes."
+      ]
+    },
+    {
+      "id": "latency_p95",
+      "provider": "vercel",
+      "window": "15m",
+      "comparator": "gt",
+      "threshold": 8000,
+      "unit": "ms",
+      "query": "p95 of durationMs grouped by endpoint; coach 8000, generate-practice 20000, analyse-homework 120000, ready 1000, client-report 1000",
+      "steps": [
+        "Open Vercel Observability for each serverless function and read p95 duration.",
+        "Alert when coach p95 exceeds 8000 ms, generate-practice p95 exceeds 20000 ms, or analyse-homework p95 exceeds 120000 ms over 15 minutes.",
+        "Alert when ready or client-report p95 exceeds 1000 ms. Do not chart prompt or image fields; durationMs is the only latency field."
+      ]
+    },
+    {
+      "id": "timeouts",
+      "provider": "vercel",
+      "window": "15m",
+      "comparator": "gt",
+      "threshold": 3,
+      "unit": "events",
+      "query": "count logs where outcome = timeout or httpStatus = 504",
+      "steps": [
+        "Open Vercel Logs.",
+        "Filter outcome timeout or httpStatus 504.",
+        "Alert when that count exceeds 3 in 15 minutes."
+      ]
+    },
+    {
+      "id": "quota_denials",
+      "provider": "vercel",
+      "window": "15m",
+      "comparator": "gt",
+      "threshold": 20,
+      "unit": "events",
+      "query": "count logs where outcome in (rate_limited, concurrency_limited)",
+      "steps": [
+        "Open Vercel Logs.",
+        "Filter outcome rate_limited or concurrency_limited.",
+        "Alert when that count exceeds 20 in 15 minutes. The log has hashes, not account emails."
+      ]
+    },
+    {
+      "id": "anthropic_spend",
+      "provider": "anthropic",
+      "window": "30d",
+      "comparator": "gt",
+      "threshold": 25,
+      "unit": "usd",
+      "query": "workspace spend month-to-date",
+      "steps": [
+        "Open the Anthropic console for this workspace.",
+        "Set a monthly spend limit and an email alert at 25 USD, then lower or raise it to the real budget before inviting more families.",
+        "Do not send a synthetic prompt to measure spend. /api/ready must stay at zero model calls."
+      ]
+    },
+    {
+      "id": "supabase_storage_growth",
+      "provider": "supabase",
+      "window": "7d",
+      "comparator": "gt",
+      "threshold": 20,
+      "unit": "percent",
+      "query": "select pg_size_pretty(pg_database_size(current_database())) as database_size",
+      "steps": [
+        "Open the Supabase project, then Database usage. Record database size and the Storage bucket size.",
+        "Run the size query in the SQL editor. Do not select from records or storage.objects payloads.",
+        "Alert when database size or bucket size grows by more than 20 percent in 7 days, or when either exceeds the plan quota."
+      ]
+    }
+  ]
+}

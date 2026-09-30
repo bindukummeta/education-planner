@@ -5,6 +5,26 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Beta readiness — budgets, cost, load, and admission
+
+- **Initial service levels** for the static shell, readiness, coach, practice, homework analysis, and sync are in `docs/slo.md`. Each one has a success target, a p95, a 28-day error budget, and a measurement query. `node scripts/slo.js` prints them. It does not query a provider, and it is not a live launch.
+- **A 5,000-user cost model** takes sample usage assumptions and prices you supply from Anthropic, Vercel, and Supabase. The sample file has no prices. Missing prices stay null. The output includes break-even per active family and quota headroom against the beta cap of 200.
+- **Load smoke** runs in CI with synthetic data, a fake model, and injected auth. Heavier and soak runs are local only. They report p50, p95, p99, and error counts.
+- **Invited beta admission** is server-side. Production calls `beta_access_allowed` before AI or account export. Unset `BETA_MODE` does not turn that off. Account deletion stays available after a family is removed. The SQL migration defaults to beta, caps the list at 200, and row policies call `sync_access_allowed`. It is not part of the normal migration order, and this repository has not launched a beta. Sign-in is not multi-factor.
+
+### Environments — public config at boot
+
+- **The shipped `sync-config.js` no longer contains a Supabase URL or anon key.** Each host serves `GET /api/public-config` from its own environment (`APP_ENV`, public Supabase URL, anon key, and the client-report toggle). The response is not stored, and the service worker does not cache `/api/*`. If the endpoint is missing or refused, the planner still opens offline and Family Sync stays off.
+- **Preview cannot publish a production binding.** `VERCEL_ENV=preview` with `APP_ENV=production` returns an empty config. Setup, runbooks, and the release check `ENFORCE_ENV=1 npm run check:env` are in the README. Service worker cache bumped v62 → v63 so installed copies drop the old precached config file.
+
+### Backup and sync — mastery, import, and full pulls
+
+- **Per-child mastery and the school year sync and are included in Export backup.** The active child, Enhanced AI consent, coach audience, geocode cache, sync cursor, and sign-in stay on this device. The classification is in `docs/data-inventory.md`.
+- **Backup files are version 6, the same version as the on-device database.** Older backups still import. A file that is too large, newer than this app, or that tries to set Enhanced AI consent is refused before anything is deleted.
+- **Import clears the sync queue and starts the next cloud merge from the backup.** A cloud row older than the backup is not copied back onto the device. Edits made after the backup still merge by last write wins.
+- **A newer cloud photo replaces a stale copy.** If a photo cannot be downloaded, sync stops before that photo and retries it. Remote changes are pulled in bounded pages.
+- **If this device runs out of space, nothing already saved is deleted.** Settings explains that, and Export backup is the recovery step. Service worker cache bumped v61 → v62.
+
 ### AI routes — sign-in, quotas, and timeouts
 
 - **Coach, homework analysis, and practice generation require a Family Sync sign-in.** Each request sends the current Supabase access token. If you are signed out, the app asks you to sign in instead of calling the assistant anonymously.
