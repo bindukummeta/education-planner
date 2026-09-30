@@ -5,6 +5,21 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### AI routes — sign-in, quotas, and timeouts
+
+- **Coach, homework analysis, and practice generation require a Family Sync sign-in.** Each request sends the current Supabase access token. If you are signed out, the app asks you to sign in instead of calling the assistant anonymously.
+- **The server checks that token with Supabase, then applies shared per-person and per-network quotas.** Homework analysis also allows only one run at a time per account. Limits and the required environment variables are in `api/README.md`. Apply `supabase/2026-ai-api-quotas.sql` before relying on the quotas.
+- **Failures stay generic.** A slow or broken assistant response no longer includes provider text. Homework analysis still stops itself shortly before the host kills the function.
+
+### Family Sync — per-account isolation
+
+- **Cloud rows and photos are scoped to the signed-in user.** `sync.js` stamps
+  `owner`, upserts on `owner,store,id`, and stores blobs at `<uid>/<id>`. A
+  session with no user id fails closed (no push, no pull). Apply
+  `supabase/2026-per-account-isolation.sql` in the same release; rollout and
+  the two-account check are in `supabase/README.md`. Service worker cache
+  bumped v56 → v57 so installed copies load this engine.
+
 ### Profiles — per-child picker inside the family login
 
 - **"Who's practising?" profile picker.** A new profile pill in the top-right of

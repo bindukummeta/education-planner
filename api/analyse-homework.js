@@ -1,13 +1,9 @@
 // api/analyse-homework.js
-// Enhanced AI (opt-in) homework vision analysis. Mirrors api/coach.js conventions.
-const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
+// Enhanced AI (opt-in) homework vision analysis. Auth, quotas, body limits, and
+// the upstream timeout live in api/security.js. The timeout stays under Vercel's
+// maxDuration (300s, see vercel.json) so a slow model returns 504 with a body.
+const security = require("./security");
 const DEFAULT_MODEL = "claude-sonnet-5";
-const ALLOWED_MEDIA = ["image/jpeg", "image/png"];
-const MAX_DECODED_BYTES = 3 * 1024 * 1024; // 3 MB decoded ceiling; client targets < 2 MB
-// Abort the upstream Anthropic call a few seconds before Vercel's maxDuration
-// (300s, see vercel.json) so we can return a clean, diagnosable 504 instead of
-// the function being hard-killed with no response body.
-const UPSTREAM_TIMEOUT_MS = 290000;
 // Output-token ceiling for the extraction. A worksheet with many questions
 // produces a long JSON array; at 8192 the response was truncated mid-JSON
 // (stop_reason: max_tokens) and failed to parse. Sonnet-class models support
@@ -180,118 +176,76 @@ function normalizePayload(raw, model, subject) {
   };
 }
 
-module.exports = async (req, res) => {
-  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return res.status(500).json({ error: "Server is missing ANTHROPIC_API_KEY. Set it in Vercel env vars or .env.local." });
-  const model = process.env.ANTHROPIC_VISION_MODEL || DEFAULT_MODEL;
-
-  let body = req.body;
-  try { if (typeof body === "string") body = JSON.parse(body); } catch (e) { body = null; }
-  if (!body || typeof body !== "object") return res.status(400).json({ error: "Invalid request" });
-
-  // Accept either a single `image` (legacy) or an `images` array (multi-page).
-  const images = Array.isArray(body.images) && body.images.length
-    ? body.images
-    : (body.image ? [body.image] : []);
-  const subject = typeof body.subject === "string" && body.subject.trim() ? body.subject.trim() : "";
-  if (!subject) return res.status(400).json({ error: "Subject is required" });
-  if (!images.length) return res.status(400).json({ error: "Missing image data" });
-  let totalBytes = 0;
-  for (const img of images) {
-    if (!img || !ALLOWED_MEDIA.includes(img.mediaType)) return res.status(400).json({ error: "Unsupported image type" });
-    if (typeof img.data !== "string" || !img.data) return res.status(400).json({ error: "Missing image data" });
-    totalBytes += img.data.length * 0.75;
-  }
-  if (totalBytes > MAX_DECODED_BYTES) return res.status(413).json({ error: "Images too large" });
-
-  const ctrl = new AbortController();
-  let upstreamTimedOut = false;
-  const upstreamTimer = setTimeout(() => { upstreamTimedOut = true; ctrl.abort(); }, UPSTREAM_TIMEOUT_MS);
+async function handle(req, res, deps) {
+  const gate = await security.protect(req, res, "analyse-homework", deps);
+  if (!gate.ok) return;
+  const images = gate.body.images;
+  const subject = gate.body.subject;
   try {
-    let upstream;
-    try {
-      upstream = await fetch(ANTHROPIC_URL, {
-        method: "POST",
-        signal: ctrl.signal,
-        headers: {
-          "content-type": "application/json",
-          "x-api-key": apiKey,
-          "anthropic-version": "2023-06-01"
+    const apiKey = String(gate.env.ANTHROPIC_API_KEY || "").trim();
+    const model = gate.env.ANTHROPIC_VISION_MODEL || DEFAULT_MODEL;
+    const upstream = await security.fetchUpstream(security.ANTHROPIC_URL, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01"
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: MAX_OUTPUT_TOKENS,
+        // Working out each answer and grading it is genuine reasoning, so leave
+        // adaptive thinking ON — without it the model does arithmetic/marking with
+        // no scratchpad and produces wrong expectedAnswers. Structured Outputs is
+        // compatible with thinking: the model thinks first, then the final text
+        // block still conforms to the schema. Depth is controlled by output_config
+        // .effort (not a token budget on adaptive models); "medium" balances
+        // accuracy against the upstream timeout. Overridable per-env.
+        thinking: { type: "adaptive" },
+        // Structured Outputs (GA output_config.format, no beta header) — constrains
+        // decoding so the response is guaranteed schema-valid JSON.
+        output_config: {
+          effort: ANTHROPIC_EFFORT,
+          format: { type: "json_schema", schema: RESPONSE_SCHEMA }
         },
-        body: JSON.stringify({
-          model,
-          max_tokens: MAX_OUTPUT_TOKENS,
-          // Working out each answer and grading it is genuine reasoning, so leave
-          // adaptive thinking ON — without it the model does arithmetic/marking with
-          // no scratchpad and produces wrong expectedAnswers. Structured Outputs is
-          // compatible with thinking: the model thinks first, then the final text
-          // block still conforms to the schema. Depth is controlled by output_config
-          // .effort (not a token budget on adaptive models); "medium" balances
-          // accuracy against the UPSTREAM_TIMEOUT_MS ceiling. Overridable per-env.
-          thinking: { type: "adaptive" },
-          // Structured Outputs (GA output_config.format, no beta header) — constrains
-          // decoding so the response is guaranteed schema-valid JSON.
-          output_config: {
-            effort: ANTHROPIC_EFFORT,
-            format: { type: "json_schema", schema: RESPONSE_SCHEMA }
-          },
-          system: SYSTEM_PROMPT,
-          messages: [{
-            role: "user",
-            content: images
-              .map((img) => ({ type: "image", source: { type: "base64", media_type: img.mediaType, data: img.data } }))
-              .concat([{ type: "text", text: buildUserPrompt(subject, images.length) }])
-          }]
-        })
-      });
-    } catch (fetchErr) {
-      // A deliberate upstream abort (we hit UPSTREAM_TIMEOUT_MS before Vercel's
-      // maxDuration) returns a clean 504 the client can message nicely, rather
-      // than the function being hard-killed with no body.
-      if (upstreamTimedOut) {
-        return res.status(504).json({ error: "The analysis took too long and timed out. Try again, or use fewer pages." });
-      }
-      throw fetchErr;
-    } finally {
-      clearTimeout(upstreamTimer);
-    }
-
+        system: SYSTEM_PROMPT,
+        messages: [{
+          role: "user",
+          content: images
+            .map((img) => ({ type: "image", source: { type: "base64", media_type: img.mediaType, data: img.data } }))
+            .concat([{ type: "text", text: buildUserPrompt(subject, images.length) }])
+        }]
+      })
+    }, gate.timeoutMs, gate.fetch);
     if (!upstream.ok) {
-      // Surface the real upstream reason (like api/coach.js) so failures are
-      // diagnosable instead of a generic "unavailable".
-      let detail = "HTTP " + upstream.status;
-      try {
-        const errData = await upstream.json();
-        detail = (errData && errData.error && errData.error.message) || detail;
-      } catch (_) { /* keep HTTP status */ }
-      return res.status(502).json({ error: "Analysis service error: " + detail, status: upstream.status });
+      const failure = await security.providerFailure(upstream);
+      return gate.fail("upstream_error", failure);
     }
     const data = await upstream.json();
-    // Structured Outputs returns the JSON as text in content[0].text, but be
-    // tolerant: join every content part that carries a string `text`.
-    const text = Array.isArray(data.content)
-      ? data.content.filter(p => p && typeof p.text === "string").map(p => p.text).join("")
-      : "";
+    const text = security.modelText(data);
     const stop = data && data.stop_reason;
-    if (!text.trim()) {
-      // No JSON at all — surface why (e.g. refusal, or an empty response) so it's
-      // diagnosable instead of a generic "invalid JSON".
-      return res.status(502).json({ error: "The analysis came back empty" + (stop ? " (stop reason: " + stop + ")" : "") + ". Please try a clearer photo." });
-    }
+    if (!text.trim()) return gate.fail("upstream_error", { providerStatus: upstream.status, stopReason: stop || "empty" });
     let parsed;
     try {
-      const cleaned = text.replace(/```json/gi, "").replace(/```/g, "").trim();
-      parsed = JSON.parse(cleaned);
+      parsed = JSON.parse(text.replace(/```json/gi, "").replace(/```/g, "").trim());
     } catch (e) {
-      // A truncated response (hit max_tokens) is the usual cause of invalid JSON.
-      const hint = stop === "max_tokens"
-        ? " The response was too long and got cut off — try a worksheet with fewer questions."
-        : "";
-      return res.status(502).json({ error: "Could not read the analysis (invalid JSON from model)." + hint });
+      return gate.fail("upstream_error", { providerStatus: upstream.status, stopReason: stop || "invalid_json" });
     }
+    gate.succeed({ providerStatus: upstream.status });
     return res.status(200).json(normalizePayload(parsed, model, subject));
   } catch (err) {
-    return res.status(500).json({ error: "Something went wrong analysing the photo: " + ((err && err.message) || String(err)) });
+    const code = err && (err.code === "timeout" || err.code === "upstream_error") ? err.code : "internal";
+    return gate.fail(code, { errorName: err && (err.errorName || err.name) });
+  } finally {
+    await gate.release();
   }
-};
+}
+
+function createHandler(deps) {
+  return function analyseHandler(req, res) {
+    return handle(req, res, deps || null);
+  };
+}
+
+module.exports = createHandler(null);
+module.exports.createHandler = createHandler;

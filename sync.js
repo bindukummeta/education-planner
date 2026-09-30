@@ -8,6 +8,10 @@
  * If supabase-js failed to load, no config is present, or the config still
  * holds the placeholder values, EVERY method is a safe no-op and the app runs
  * exactly as it does offline. app.js only needs window.EduSync (guarded).
+ *
+ * A signed-in session with no user id fails closed: nothing is pushed or pulled.
+ * Upserts target the owner-scoped key (owner, store, id) from
+ * supabase/2026-per-account-isolation.sql. Blob objects live at "<uid>/<id>".
  */
 (function () {
   "use strict";
@@ -15,6 +19,9 @@
   const TABLE = "records";
   const BUCKET = "blobs";
   const DEBOUNCE_MS = 3000;
+  // Must match the unique (owner, store, id) constraint in the isolation migration.
+  const OWNER_CONFLICT = "owner,store,id";
+  const NO_UID_ERROR = "Sync refused: signed-in session has no user id";
 
   let sb = null;
   let debounceTimer = null;
@@ -87,6 +94,18 @@
     return res;
   }
 
+  async function getAccessToken() {
+    if (!sb) return null;
+    try {
+      const res = await sb.auth.getSession();
+      const session = res && res.data ? res.data.session : null;
+      const token = session && session.access_token;
+      return typeof token === "string" && token ? token : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   async function signOut() {
     if (!sb) return;
     await sb.auth.signOut();
@@ -111,14 +130,34 @@
 
   async function doSync() {
     const res = await sb.auth.getSession();
-    if (!res || !res.data || !res.data.session) return; // signed out → no-op
+    const session = res && res.data ? res.data.session : null;
+    if (!session) return; // signed out → no-op
+    // Every row is scoped to the signed-in user so unrelated parents never see
+    // each other's data. RLS enforces this server-side; owner is stamped here so
+    // the write satisfies the policy and the pull can filter to just our rows.
+    // No uid → fail closed. Do not write an unscoped row and do not pull.
+    const uid = assertUid(session.user && session.user.id);
     status.syncing = true; status.error = null; notify();
-    await pushLocal();
-    await pullRemote();
+    await pushLocal(uid);
+    await pullRemote(uid);
     status.lastSyncedAt = Date.now();
   }
 
-  async function pushLocal() {
+  function assertUid(uid) {
+    if (!uid) throw new Error(NO_UID_ERROR);
+    return uid;
+  }
+
+  // Storage object path for a blob, namespaced by user so image bytes are also
+  // per-account (the bucket's RLS restricts each user to their own uid/ folder).
+  function blobPath(uid, id) { return uid + "/" + id; }
+
+  function upsertOwned(row) {
+    return sb.from(TABLE).upsert(row, { onConflict: OWNER_CONFLICT });
+  }
+
+  async function pushLocal(uid) {
+    assertUid(uid);
     const dirty = await window.EduStore.getDirty();
     if (!dirty || !dirty.length) return;
     const done = [];
@@ -128,25 +167,26 @@
       if (rec) {
         let data = rec;
         if (d.store === BUCKET) {
-          const up = await sb.storage.from(BUCKET).upload(rec.id, rec.blob, { upsert: true, contentType: rec.type });
+          const up = await sb.storage.from(BUCKET).upload(blobPath(uid, rec.id), rec.blob, { upsert: true, contentType: rec.type });
           if (up && up.error) throw up.error;
           data = { id: rec.id, type: rec.type, createdAt: rec.createdAt, updatedAt: rec.updatedAt };
         }
-        const r = await sb.from(TABLE).upsert({ store: d.store, id: d.id, data: data, updated_at: iso, deleted: false });
+        const r = await upsertOwned({ owner: uid, store: d.store, id: d.id, data: data, updated_at: iso, deleted: false });
         if (r && r.error) throw r.error;
       } else {
-        const r = await sb.from(TABLE).upsert({ store: d.store, id: d.id, data: {}, updated_at: iso, deleted: true });
+        const r = await upsertOwned({ owner: uid, store: d.store, id: d.id, data: {}, updated_at: iso, deleted: true });
         if (r && r.error) throw r.error;
-        if (d.store === BUCKET) { try { await sb.storage.from(BUCKET).remove([d.id]); } catch (_) {} }
+        if (d.store === BUCKET) { try { await sb.storage.from(BUCKET).remove([blobPath(uid, d.id)]); } catch (_) {} }
       }
       done.push(d.key);
     }
     await window.EduStore.clearDirty(done);
   }
 
-  async function pullRemote() {
+  async function pullRemote(uid) {
+    assertUid(uid);
     const since = (await window.EduStore.getMeta("lastPulledAt")) || 0;
-    const res = await sb.from(TABLE).select("*").gte("updated_at", new Date(since).toISOString()).order("updated_at", { ascending: true });
+    const res = await sb.from(TABLE).select("*").eq("owner", uid).gte("updated_at", new Date(since).toISOString()).order("updated_at", { ascending: true });
     if (res && res.error) throw res.error;
     const rows = (res && res.data) || [];
     let maxTs = since;
@@ -157,7 +197,7 @@
       if (row.store === BUCKET) {
         const existing = await window.EduStore.getBlob(row.id);
         if (existing) continue;
-        const dl = await sb.storage.from(BUCKET).download(row.id);
+        const dl = await sb.storage.from(BUCKET).download(blobPath(uid, row.id));
         if (!dl || dl.error || !dl.data) continue;
         const meta = row.data || {};
         await window.EduStore.applyRemote(BUCKET, { id: row.id, blob: dl.data, type: meta.type || dl.data.type || "image/jpeg", createdAt: meta.createdAt || ts, updatedAt: ts });
@@ -168,5 +208,5 @@
     await window.EduStore.setMeta("lastPulledAt", maxTs);
   }
 
-  window.EduSync = { init: init, signInWithEmail: signInWithEmail, verifyOtpCode: verifyOtpCode, signOut: signOut, getStatus: getStatus, syncNow: syncNow, onChange: onChange };
+  window.EduSync = { init: init, signInWithEmail: signInWithEmail, verifyOtpCode: verifyOtpCode, signOut: signOut, getStatus: getStatus, getAccessToken: getAccessToken, syncNow: syncNow, onChange: onChange };
 })();

@@ -1349,6 +1349,23 @@
     };
     return { subjects, schools, reading: { weekMinutes, books }, mocks, interests, projects, games };
   }
+  const AI_SIGN_IN_ERROR = "Sign in is required. Open Settings, use Family Sync to sign in, then try again.";
+
+  async function aiAuthHeaders() {
+    let token = null;
+    try {
+      if (window.EduSync && typeof EduSync.getAccessToken === "function") {
+        token = await EduSync.getAccessToken();
+      }
+    } catch (_) { token = null; }
+    if (!token) {
+      const err = new Error(AI_SIGN_IN_ERROR);
+      err.code = "auth";
+      throw err;
+    }
+    return { "Content-Type": "application/json", Authorization: "Bearer " + token };
+  }
+
   async function runCoach() {
     const status = $("coach-status");
     const out = $("coach-output");
@@ -1366,7 +1383,7 @@
         : { snapshot: snapshot };
       const res = await fetch("/api/coach", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: await aiAuthHeaders(),
         body: JSON.stringify(payload),
       });
       const data = await res.json();
@@ -1376,7 +1393,7 @@
         ? softenSummary(data.advice || "") || "You're doing great — keep playing and practising! 🌟"
         : (data.advice || "No advice returned.");
     } catch (err) {
-      status.textContent = "Couldn't get advice: " + err.message;
+      status.textContent = (err && err.code === "auth") ? err.message : ("Couldn't get advice: " + err.message);
     } finally {
       $("coach-run").disabled = false;
     }
@@ -3154,6 +3171,7 @@
     // Accept a single blob or an array of blobs (multi-page worksheet).
     const blobs = Array.isArray(images) ? images.filter(Boolean) : (images ? [images] : []);
     if (!blobs.length) throw new Error("Could not read the photo.");
+    if (blobs.length > 8) throw new Error("Please choose at most 8 pages at a time.");
     // (a) consent gate: master switch ON + per-session consent
     const enabled = await EduStore.getMeta("analyzer.enhancedAi.enabled");
     if (enabled !== true && enabled !== "true") {
@@ -3184,6 +3202,7 @@
     // see vercel.json) so the client waits for the server's real response/error
     // instead of pre-empting it.
     const clientTimeoutMs = Math.min(295000, 45000 + payloadImages.length * 40000);
+    const headers = await aiAuthHeaders();
     const ctrl = new AbortController();
     let timedOut = false;
     const timer = setTimeout(() => { timedOut = true; ctrl.abort(); }, clientTimeoutMs);
@@ -3191,12 +3210,13 @@
     try {
       resp = await fetch("/api/analyse-homework", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: headers,
         body: JSON.stringify({ images: payloadImages, subject: subject }),
         signal: options.signal || ctrl.signal,
       });
     } catch (e) {
       clearTimeout(timer);
+      if (e && e.code === "auth") throw e;
       if (timedOut) {
         const many = payloadImages.length > 1
           ? " With several pages this can take a while — try again, or split it into fewer pages."
@@ -4762,7 +4782,7 @@
     if (!samples.length) throw new Error("There are no questions to base practice on.");
     const res = await fetch("/api/generate-practice", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: await aiAuthHeaders(),
       body: JSON.stringify({
         subject: group.subject || "",
         topic: group.topic || "",
@@ -4820,7 +4840,7 @@
         openPracticeSession(group, questions, { generatedRound: true });
       } catch (err) {
         status.className = "vq-feedback vq-fb-no";
-        status.textContent = "Couldn't generate practice: " + err.message;
+        status.textContent = (err && err.code === "auth") ? err.message : ("Couldn't generate practice: " + err.message);
         go.disabled = false;
       }
     });

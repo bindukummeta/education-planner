@@ -4,11 +4,9 @@
 // fresh, self-contained, auto-checkable questions of the SAME skill so the child
 // can practise the exact blind spot. Mirrors api/coach.js conventions: text-only
 // POST, ANTHROPIC_API_KEY from env, Structured Outputs for guaranteed-valid JSON.
-const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
+const security = require("./security");
 const DEFAULT_MODEL = "claude-sonnet-5";
 const MAX_OUTPUT_TOKENS = Number(process.env.ANTHROPIC_MAX_OUTPUT_TOKENS) || 4000;
-const MAX_SAMPLES = 6;   // cap the derived examples we forward upstream
-const MAX_COUNT = 8;     // cap how many fresh questions we ask for
 
 // Structured Outputs schema — the reply is guaranteed to match this shape.
 const RESPONSE_SCHEMA = {
@@ -78,31 +76,14 @@ function normalizeQuestions(raw, count) {
     .slice(0, count);
 }
 
-module.exports = async (req, res) => {
-  if (req.method !== "POST") return res.status(405).json({ error: "Use POST" });
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return res.status(500).json({ error: "Server is missing ANTHROPIC_API_KEY. Set it in Vercel env vars or .env.local." });
-  const model = process.env.ANTHROPIC_PRACTICE_MODEL || DEFAULT_MODEL;
-
-  let body = req.body;
-  try { if (typeof body === "string") body = JSON.parse(body); } catch (e) { body = null; }
-  if (!body || typeof body !== "object") return res.status(400).json({ error: "Invalid request" });
-
-  const subject = strOrEmpty(body.subject);
-  const topic = strOrEmpty(body.topic);
-  const errorType = strOrEmpty(body.errorType);
-  const rawSamples = Array.isArray(body.samples) ? body.samples : [];
-  const samples = rawSamples
-    .map((s) => ({ questionText: strOrEmpty(s && s.questionText), expectedAnswer: strOrEmpty(s && s.expectedAnswer) }))
-    .filter((s) => s.questionText)
-    .slice(0, MAX_SAMPLES);
-  if (!samples.length) return res.status(400).json({ error: "At least one sample question is required." });
-  let count = Number(body.count);
-  if (!isFinite(count) || count < 1) count = 5;
-  count = Math.min(MAX_COUNT, Math.round(count));
-
+async function handle(req, res, deps) {
+  const gate = await security.protect(req, res, "generate-practice", deps);
+  if (!gate.ok) return;
   try {
-    const upstream = await fetch(ANTHROPIC_URL, {
+    const apiKey = String(gate.env.ANTHROPIC_API_KEY || "").trim();
+    const model = gate.env.ANTHROPIC_PRACTICE_MODEL || DEFAULT_MODEL;
+    const body = gate.body;
+    const upstream = await security.fetchUpstream(security.ANTHROPIC_URL, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -117,24 +98,33 @@ module.exports = async (req, res) => {
         thinking: { type: "disabled" },
         output_config: { format: { type: "json_schema", schema: RESPONSE_SCHEMA } },
         system: SYSTEM_PROMPT,
-        messages: [{ role: "user", content: buildUserPrompt(subject, topic, errorType, samples, count) }]
+        messages: [{ role: "user", content: buildUserPrompt(body.subject, body.topic, body.errorType, body.samples, body.count) }]
       })
-    });
-    const data = await upstream.json();
+    }, gate.timeoutMs, gate.fetch);
     if (!upstream.ok) {
-      const detail = (data && data.error && data.error.message) || ("HTTP " + upstream.status);
-      return res.status(502).json({ error: "Practice service error: " + detail });
+      const failure = await security.providerFailure(upstream);
+      return gate.fail("upstream_error", failure);
     }
-    const text = Array.isArray(data.content)
-      ? data.content.filter((p) => p && typeof p.text === "string").map((p) => p.text).join("")
-      : "";
+    const data = await upstream.json();
     let parsed = null;
-    try { parsed = JSON.parse(text); } catch (_) { parsed = null; }
-    if (!parsed) return res.status(502).json({ error: "The practice questions didn't come back in a usable form. Please try again." });
-    const questions = normalizeQuestions(parsed, count);
-    if (!questions.length) return res.status(502).json({ error: "No usable practice questions were generated. Please try again." });
+    try { parsed = JSON.parse(security.modelText(data)); } catch (_) { parsed = null; }
+    const questions = parsed ? normalizeQuestions(parsed, body.count) : [];
+    if (!questions.length) return gate.fail("upstream_error", { providerStatus: upstream.status, stopReason: data && data.stop_reason });
+    gate.succeed({ providerStatus: upstream.status });
     return res.status(200).json({ questions });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    const code = err && (err.code === "timeout" || err.code === "upstream_error") ? err.code : "internal";
+    return gate.fail(code, { errorName: err && (err.errorName || err.name) });
+  } finally {
+    await gate.release();
   }
-};
+}
+
+function createHandler(deps) {
+  return function practiceHandler(req, res) {
+    return handle(req, res, deps || null);
+  };
+}
+
+module.exports = createHandler(null);
+module.exports.createHandler = createHandler;

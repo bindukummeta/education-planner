@@ -2,12 +2,10 @@
 // Integration test for the /api/coach serverless handler. Mocks global.fetch so
 // nothing hits the network, and asserts the audience branching picks the right
 // prompt (parent path unchanged; child path uses the kid-safe prompt) plus the
-// request-validation paths. No DOM/vm slice needed — coach.js is plain Node.
+// request-validation paths. Auth and quotas are injected explicitly.
 const assert = require("assert"), path = require("path");
 
-process.env.ANTHROPIC_API_KEY = "test-key";
-delete process.env.ANTHROPIC_COACH_MODEL;
-const handler = require(path.join(__dirname, "..", "api", "coach.js"));
+const { createHandler } = require(path.join(__dirname, "..", "api", "coach.js"));
 
 let passed = 0;
 function ok(d, c) { assert.ok(c, d); passed++; }
@@ -16,19 +14,37 @@ const SNAPSHOT = {
   subjects: [{ subject: "Maths", recentAvg: 62 }],
   schools: [], reading: { weekMinutes: 90, books: 2 }, mocks: [],
 };
+const ENV = {
+  ANTHROPIC_API_KEY: "test-anthropic-key-0123456789",
+  ANTHROPIC_COACH_MODEL: "",
+};
+
+function deps(fetchImpl) {
+  return {
+    env: ENV,
+    fetch: fetchImpl,
+    verifyAccessToken: async () => ({ userId: "11111111-1111-4111-8111-111111111111" }),
+    consumeQuota: async () => ({ ok: true, leaseId: null }),
+    releaseConcurrency: async () => {},
+    log: () => {},
+  };
+}
 
 // Invoke the handler with a fake req/res, capturing the outbound Anthropic call.
 async function invoke(body, method) {
   let captured = null;
-  const orig = global.fetch;
-  global.fetch = async (url, opts) => {
-    captured = { url, prompt: JSON.parse(opts.body).messages[0].content, model: JSON.parse(opts.body).model };
+  const handler = createHandler(deps(async (url, opts) => {
+    captured = { url, prompt: JSON.parse(opts.body).messages[0].content, model: JSON.parse(opts.body).model, signal: opts.signal };
     return { ok: true, status: 200, json: async () => ({ content: [{ text: "ok advice" }] }) };
+  }));
+  const req = {
+    method: method || "POST",
+    body,
+    headers: { authorization: "Bearer aaaaaaaa.bbbbbbbb.cccccccc" },
   };
-  const req = { method: method || "POST", body };
   let statusCode = null, jsonBody = null;
-  const res = { status(c) { statusCode = c; return this; }, json(b) { jsonBody = b; return this; } };
-  try { await handler(req, res); } finally { global.fetch = orig; }
+  const res = { status(c) { statusCode = c; return this; }, json(b) { jsonBody = b; return this; }, setHeader() { return this; } };
+  await handler(req, res);
   return { statusCode, jsonBody, captured };
 }
 
@@ -43,6 +59,7 @@ async function invoke(body, method) {
   ok("parent prompt has no child framing", p.captured.prompt.indexOf("writing DIRECTLY to a child") < 0);
   ok("parent prompt embeds snapshot", p.captured.prompt.indexOf(snapJSON) >= 0);
   ok("default model used", p.captured.model === "claude-sonnet-5");
+  ok("upstream call has a timeout signal", p.captured.signal && typeof p.captured.signal.aborted === "boolean");
 
   // Child audience → kid-safe prompt with the banned-word rules.
   const c = await invoke({ snapshot: SNAPSHOT, audience: "child" });

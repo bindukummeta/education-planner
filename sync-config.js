@@ -1,5 +1,6 @@
 // sync-config.js — PUBLIC values only. The anon key is safe to ship in client
-// code; real security comes from Supabase Row Level Security (RLS), not secrecy.
+// code; real security comes from owner-scoped Row Level Security (RLS), not
+// secrecy. See supabase/README.md before enabling Family Sync for more families.
 //
 // To enable cross-device Family Sync, replace the two placeholders below with the
 // Project URL and anon public key from your Supabase project (Project Settings →

@@ -4,9 +4,11 @@
 //
 // The Anthropic API key is read from the ANTHROPIC_API_KEY environment variable
 // (set in .env.local for local `vercel dev`, and in Vercel project settings for
-// production). It is never sent to the browser.
+// production). It is never sent to the browser. Callers must send a Supabase
+// user access token; see api/README.md.
 
-const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
+const security = require("./security");
+
 const DEFAULT_MODEL = "claude-sonnet-5";
 
 function buildPrompt(snapshot) {
@@ -55,56 +57,48 @@ function buildKidPrompt(snapshot) {
   ].join("\n");
 }
 
-async function callClaude(apiKey, model, prompt) {
-  const res = await fetch(ANTHROPIC_URL, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model,
-      max_tokens: 1200,
-      messages: [{ role: "user", content: prompt }],
-    }),
-  });
-  const data = await res.json();
-  if (!res.ok) {
-    const msg = (data && data.error && data.error.message) || ("HTTP " + res.status);
-    throw new Error(msg);
+async function handle(req, res, deps) {
+  const gate = await security.protect(req, res, "coach", deps);
+  if (!gate.ok) return;
+  try {
+    const apiKey = String(gate.env.ANTHROPIC_API_KEY || "").trim();
+    const model = gate.env.ANTHROPIC_COACH_MODEL || DEFAULT_MODEL;
+    const audience = gate.body.audience === "child" ? "child" : "parent";
+    const prompt = audience === "child" ? buildKidPrompt(gate.body.snapshot) : buildPrompt(gate.body.snapshot);
+    const upstream = await security.fetchUpstream(security.ANTHROPIC_URL, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: model,
+        max_tokens: 1200,
+        messages: [{ role: "user", content: prompt }],
+      }),
+    }, gate.timeoutMs, gate.fetch);
+    if (!upstream.ok) {
+      const failure = await security.providerFailure(upstream);
+      return gate.fail("upstream_error", failure);
+    }
+    const data = await upstream.json();
+    const advice = security.modelText(data);
+    gate.succeed({ providerStatus: upstream.status });
+    res.status(200).json({ advice: advice });
+  } catch (err) {
+    const code = err && (err.code === "timeout" || err.code === "upstream_error") ? err.code : "internal";
+    return gate.fail(code, { errorName: err && (err.errorName || err.name) });
+  } finally {
+    await gate.release();
   }
-  return (data.content || []).map((c) => c.text || "").join("");
 }
 
-module.exports = async (req, res) => {
-  if (req.method !== "POST") {
-    res.status(405).json({ error: "Use POST" });
-    return;
-  }
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    res.status(500).json({ error: "Server is missing ANTHROPIC_API_KEY. Set it in Vercel env vars or .env.local." });
-    return;
-  }
+function createHandler(deps) {
+  return function coachHandler(req, res) {
+    return handle(req, res, deps || null);
+  };
+}
 
-  let body = req.body;
-  if (typeof body === "string") {
-    try { body = JSON.parse(body); } catch (_) { body = {}; }
-  }
-  const snapshot = (body && body.snapshot) || null;
-  if (!snapshot) {
-    res.status(400).json({ error: "No snapshot provided." });
-    return;
-  }
-
-  const audience = (body && body.audience) === "child" ? "child" : "parent";
-  const model = process.env.ANTHROPIC_COACH_MODEL || DEFAULT_MODEL;
-  try {
-    const prompt = audience === "child" ? buildKidPrompt(snapshot) : buildPrompt(snapshot);
-    const advice = await callClaude(apiKey, model, prompt);
-    res.status(200).json({ advice });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-};
+module.exports = createHandler(null);
+module.exports.createHandler = createHandler;

@@ -2,13 +2,11 @@
 // Integration test for the /api/generate-practice serverless handler. Mocks
 // global.fetch so nothing hits the network, and asserts the request shaping
 // (subject/topic/error/samples embedded in the prompt), the Structured-Outputs
-// options, response normalization, and the validation paths. No DOM/vm slice —
-// generate-practice.js is plain Node.
+// options, response normalization, and the validation paths. Auth and quotas
+// are injected explicitly.
 const assert = require("assert"), path = require("path");
 
-process.env.ANTHROPIC_API_KEY = "test-key";
-delete process.env.ANTHROPIC_PRACTICE_MODEL;
-const handler = require(path.join(__dirname, "..", "api", "generate-practice.js"));
+const { createHandler } = require(path.join(__dirname, "..", "api", "generate-practice.js"));
 
 let passed = 0;
 function ok(d, c) { assert.ok(c, d); passed++; }
@@ -24,12 +22,23 @@ const REPLY = {
     { questionText: "  ", expectedAnswer: "x", hint: "dropped — no question text" },
   ],
 };
+const ENV = { ANTHROPIC_API_KEY: "test-anthropic-key-0123456789" };
+
+function deps(fetchImpl) {
+  return {
+    env: ENV,
+    fetch: fetchImpl,
+    verifyAccessToken: async () => ({ userId: "11111111-1111-4111-8111-111111111111" }),
+    consumeQuota: async () => ({ ok: true, leaseId: null }),
+    releaseConcurrency: async () => {},
+    log: () => {},
+  };
+}
 
 // Invoke the handler with a fake req/res, capturing the outbound Anthropic call.
 async function invoke(body, method, reply) {
   let captured = null;
-  const orig = global.fetch;
-  global.fetch = async (url, opts) => {
+  const handler = createHandler(deps(async (url, opts) => {
     const parsed = JSON.parse(opts.body);
     captured = {
       url,
@@ -38,13 +47,18 @@ async function invoke(body, method, reply) {
       thinking: parsed.thinking,
       format: parsed.output_config && parsed.output_config.format,
       system: parsed.system,
+      signal: opts.signal,
     };
     return { ok: true, status: 200, json: async () => ({ content: [{ text: JSON.stringify(reply || REPLY) }] }) };
+  }));
+  const req = {
+    method: method || "POST",
+    body,
+    headers: { authorization: "Bearer aaaaaaaa.bbbbbbbb.cccccccc" },
   };
-  const req = { method: method || "POST", body };
   let statusCode = null, jsonBody = null;
-  const res = { status(c) { statusCode = c; return this; }, json(b) { jsonBody = b; return this; } };
-  try { await handler(req, res); } finally { global.fetch = orig; }
+  const res = { status(c) { statusCode = c; return this; }, json(b) { jsonBody = b; return this; }, setHeader() { return this; } };
+  await handler(req, res);
   return { statusCode, jsonBody, captured };
 }
 
@@ -71,6 +85,7 @@ async function invoke(body, method, reply) {
   ok("thinking disabled", r.captured.thinking && r.captured.thinking.type === "disabled");
   ok("structured output json_schema", r.captured.format && r.captured.format.type === "json_schema");
   ok("schema requires questions", r.captured.format.schema.required.indexOf("questions") >= 0);
+  ok("upstream call has a timeout signal", r.captured.signal && typeof r.captured.signal.aborted === "boolean");
 
   // System prompt keeps the kid-safe, no-copy, short-answer rules.
   ok("system forbids deficit words", r.captured.system.indexOf("deficit") >= 0);
@@ -102,6 +117,7 @@ async function invoke(body, method, reply) {
   const unusable = await invoke({ subject: "english", samples: SAMPLES }, "POST",
     { questions: [{ questionText: "", expectedAnswer: "" }] });
   ok("no usable questions → 502", unusable.statusCode === 502);
+  ok("unusable response stays generic", unusable.jsonBody && unusable.jsonBody.code === "upstream_error");
 
   console.log("generate-practice-api.test.js: " + passed + " assertions passed");
 })().catch((err) => { console.error(err); process.exit(1); });
